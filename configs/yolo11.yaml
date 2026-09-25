@@ -1,0 +1,52 @@
+# YOLOv11 detection hyperparameters — primary model (Naman).
+# Source: IPD_Project_Guide.md Days 4-5 + AGENT.md Section 4.1.
+# Same base hyperparameters as YOLOv8 baseline and YOLO26 comparison so H1 is fair.
+
+task: detect
+mode: train
+
+# Model
+model: yolo11s.pt            # yolo11s primary; yolo11m for final reported results
+
+# Data
+data: data/microplastic.yaml
+imgsz: 640
+
+# Training schedule
+epochs: 100
+batch: 16
+optimizer: AdamW
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+
+# Augmentation (Ultralytics defaults preserved for fair comparison)
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+degrees: 0.0
+translate: 0.1
+scale: 0.5
+shear: 0.0
+perspective: 0.0
+flipud: 0.0
+fliplr: 0.5
+mosaic: 1.0
+mixup: 0.0
+copy_paste: 0.0
+
+# Misc
+seed: 42                     # SEED=42 for all runs — reproducibility required
+workers: 8
+project: results/detection
+name: yolo11s_microplastic
+exist_ok: true
+plots: true
+val: true
+save: true
+save_period: -1
+verbose: true
