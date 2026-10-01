@@ -34,6 +34,7 @@ morphology:
   freeze_epochs: 10
   unfreeze_epochs: 30
   full_finetune_epochs: 50
+  unfreeze_blocks: 4          # last-4-blocks unfreeze (run 2)
   freeze_lr: 1e-3
   unfreeze_lr: 1e-4
   head_lr: 1e-3

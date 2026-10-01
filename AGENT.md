@@ -215,8 +215,10 @@ def detect_and_crop(image_path) -> list[dict]:
 ```
 Input: RGB crop [B, 3, 224, 224]
   → timm mobilenetv3_small_100 (pretrained, num_classes=0, global_pool='avg')
-  → features [B, 576]
-  → Linear(576→256) → LayerNorm → ReLU → Linear(256→5)
+  → features [B, 1024]  # ARCHITECTURE CHANGE (runtime fact): timm keeps the 1x1
+                        # conv_head (576→1024) even at num_classes=0; the head is
+                        # sized from backbone.num_features at runtime, never hardcoded.
+  → Linear(1024→256) → LayerNorm → ReLU → Linear(256→5)
 Output: [B, 5] morphology logits  (sphere/fragment/fiber/film/foam)
 ```
 

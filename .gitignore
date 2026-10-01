@@ -23,7 +23,10 @@ weights/
 *.rar
 
 # Results & Logs
-results/
+results/*
+!results/classification/
+results/classification/*
+!results/classification/confusion_morphology.png
 logs/
 *.log
 runs/
