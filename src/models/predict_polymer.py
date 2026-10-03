@@ -34,7 +34,9 @@ def _load_model(weights_path: Path) -> tuple[SpectralTower, list[str], torch.dev
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
     classes = checkpoint.get("classes", list(POLYMER_CLASSES))
-    model = SpectralTower(num_classes=len(classes), input_bands=checkpoint.get("input_bands", 600))
+    model = SpectralTower(
+        num_classes=len(classes), input_bands=checkpoint.get("input_bands", 600)
+    )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()

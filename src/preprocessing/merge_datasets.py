@@ -48,7 +48,11 @@ def count_images(root: Path) -> int:
     root = Path(root)
     if not root.is_dir():
         return 0
-    return sum(1 for path in root.rglob("*") if path.suffix.lower() in {".jpg", ".jpeg", ".png"})
+    return sum(
+        1
+        for path in root.rglob("*")
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
 
 
 def merge_yolo_datasets(sources, dest=DEFAULT_PROCESSED) -> Path:

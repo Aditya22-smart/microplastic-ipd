@@ -16,7 +16,9 @@ st.title("Automated Microplastic Detection & Classification")
 tab_image, tab_spectrum, tab_summary = st.tabs(["Image", "Spectrum", "Summary"])
 
 with tab_image:
-    uploaded = st.file_uploader("Upload a microscope image", type=["jpg", "jpeg", "png"])
+    uploaded = st.file_uploader(
+        "Upload a microscope image", type=["jpg", "jpeg", "png"]
+    )
     if uploaded is not None:
         from PIL import Image
 
@@ -40,12 +42,16 @@ with tab_image:
             st.error(str(exc))
 
 with tab_spectrum:
-    uploaded_spectrum = st.file_uploader("Upload a spectrum (CSV/txt)", type=["csv", "txt"])
+    uploaded_spectrum = st.file_uploader(
+        "Upload a spectrum (CSV/txt)", type=["csv", "txt"]
+    )
     if uploaded_spectrum is not None:
         try:
             import numpy as np
 
-            spectrum = np.loadtxt(io.StringIO(uploaded_spectrum.getvalue().decode("utf-8")), delimiter=",")
+            spectrum = np.loadtxt(
+                io.StringIO(uploaded_spectrum.getvalue().decode("utf-8")), delimiter=","
+            )
             result = analyze_spectrum(spectrum)
             st.metric("polymer", result["polymer"])
             st.metric("confidence", f"{result['polymer_confidence']:.3f}")
@@ -63,7 +69,11 @@ with tab_summary:
         morphology_counts = Counter(record["morphology"] for record in records)
         st.write(f"total particles: {len(records)}")
         st.plotly_chart(
-            px.pie(names=list(morphology_counts.keys()), values=list(morphology_counts.values()), title="Morphology"),
+            px.pie(
+                names=list(morphology_counts.keys()),
+                values=list(morphology_counts.values()),
+                title="Morphology",
+            ),
             use_container_width=True,
         )
     else:

@@ -18,7 +18,13 @@ def h1_paired_ttest(yolo11_maps, yolov8_maps) -> dict:
     stat, p = ttest_rel(yolo11_maps, yolov8_maps, alternative="greater")
     diff = np.asarray(yolo11_maps) - np.asarray(yolov8_maps)
     d = float(diff.mean() / diff.std()) if diff.std() > 0 else 0.0
-    return {"test": "paired t-test", "statistic": float(stat), "p_value": float(p), "cohens_d": d, "decision": bool(p < 0.05)}
+    return {
+        "test": "paired t-test",
+        "statistic": float(stat),
+        "p_value": float(p),
+        "cohens_d": d,
+        "decision": bool(p < 0.05),
+    }
 
 
 def h2_mcnemar(y_true, pred_finetuned, pred_scratch) -> dict:
@@ -31,7 +37,12 @@ def h2_mcnemar(y_true, pred_finetuned, pred_scratch) -> dict:
     c = int(np.sum((pred_finetuned != y_true) & (pred_scratch == y_true)))
     table = [[0, b], [c, 0]]
     result = mcnemar(table, exact=True)
-    return {"test": "McNemar", "statistic": float(result.statistic), "p_value": float(result.pvalue), "decision": bool(result.pvalue < 0.05)}
+    return {
+        "test": "McNemar",
+        "statistic": float(result.statistic),
+        "p_value": float(result.pvalue),
+        "decision": bool(result.pvalue < 0.05),
+    }
 
 
 def h3_wilcoxon(cnn_f1s, svm_f1s) -> dict:
@@ -40,7 +51,13 @@ def h3_wilcoxon(cnn_f1s, svm_f1s) -> dict:
     stat, p = wilcoxon(cnn_f1s, svm_f1s, alternative="greater")
     diff = np.asarray(cnn_f1s) - np.asarray(svm_f1s)
     d = float(diff.mean() / diff.std()) if diff.std() > 0 else 0.0
-    return {"test": "Wilcoxon signed-rank", "statistic": float(stat), "p_value": float(p), "cohens_d": d, "decision": bool(p < 0.05)}
+    return {
+        "test": "Wilcoxon signed-rank",
+        "statistic": float(stat),
+        "p_value": float(p),
+        "cohens_d": d,
+        "decision": bool(p < 0.05),
+    }
 
 
 def save_result(name: str, payload: dict, out_dir: Path = RESULTS_DIR) -> Path:

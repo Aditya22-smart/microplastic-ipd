@@ -6,8 +6,9 @@ import argparse
 import json
 import random
 import sys
-from collections.abc import Sequence
+from collections.abc import Sequence, Sized
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -18,11 +19,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:  # allow `python src/training/...py` from anywhere
     sys.path.insert(0, str(REPO_ROOT))
 
-from PIL import Image
-from sklearn.metrics import confusion_matrix, f1_score
+from PIL import Image  # noqa: E402
+from sklearn.metrics import confusion_matrix, f1_score  # noqa: E402
 
-from src.models.vision_tower import VisionTower
-from src.preprocessing.image_preprocess import get_eval_transform, get_train_transform
+from src.models.vision_tower import VisionTower  # noqa: E402
+from src.preprocessing.image_preprocess import (  # noqa: E402
+    get_eval_transform,
+    get_train_transform,
+)
 
 DEFAULT_CONFIG = REPO_ROOT / "configs" / "training_config.yaml"
 DEFAULT_DATA_DIR = REPO_ROOT / "data" / "processed" / "morphology"
@@ -80,9 +84,7 @@ class MorphologyDataset(torch.utils.data.Dataset):
         return image, label
 
 
-def _subset(
-    dataset: torch.utils.data.Dataset, limit: int | None
-) -> torch.utils.data.Dataset:
+def _subset(dataset: MorphologyDataset, limit: int | None) -> torch.utils.data.Dataset:
     if limit is None:
         return dataset
     return torch.utils.data.Subset(dataset, range(min(limit, len(dataset))))
@@ -113,7 +115,9 @@ def build_loaders(
         MorphologyDataset(data_dir / "test", classes, get_eval_transform(img_size)),
         limit,
     )
-    loader_kwargs = {
+    # DataLoader kwargs are heterogeneous (int/bool/str), so this needs Any for
+    # mypy to accept `**loader_kwargs` against the typed DataLoader signature.
+    loader_kwargs: dict[str, Any] = {
         "batch_size": batch_size,
         "num_workers": num_workers,
         "pin_memory": True,
@@ -121,7 +125,7 @@ def build_loaders(
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         shuffle=True,
-        drop_last=len(train_dataset) > batch_size,
+        drop_last=len(cast(Sized, train_dataset)) > batch_size,
         **loader_kwargs,
     )
     val_loader = torch.utils.data.DataLoader(
@@ -477,7 +481,8 @@ def train_loop(
     criterion = nn.CrossEntropyLoss(
         weight=load_class_weights(data_dir, classes, device)
     )
-    print("loss class weights:", criterion.weight.tolist())
+    # CrossEntropyLoss stores `weight` verbatim, so it is never None here.
+    print("loss class weights:", criterion.weight.tolist())  # type: ignore[union-attr]
 
     weights_dir = output_root / "weights"
     weights_dir.mkdir(parents=True, exist_ok=True)

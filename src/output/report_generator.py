@@ -10,11 +10,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def build_report_pdf(records: list[dict], title: str = "Microplastic Analysis Report") -> bytes:
+def build_report_pdf(
+    records: list[dict], title: str = "Microplastic Analysis Report"
+) -> bytes:
     from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib import colors
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+    )
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -22,22 +27,33 @@ def build_report_pdf(records: list[dict], title: str = "Microplastic Analysis Re
     story = [
         Paragraph(title, styles["Title"]),
         Spacer(1, 12),
-        Paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}", styles["Normal"]),
+        Paragraph(
+            f"Generated: {datetime.now().isoformat(timespec='seconds')}",
+            styles["Normal"],
+        ),
         Paragraph(f"Total particles: {len(records)}", styles["Normal"]),
         Spacer(1, 12),
     ]
 
     if records:
-        morphology_counts = Counter(record.get("morphology") for record in records if record.get("morphology"))
+        morphology_counts = Counter(
+            record.get("morphology") for record in records if record.get("morphology")
+        )
         story.append(Paragraph("Morphology distribution", styles["Heading2"]))
-        table_data = [["morphology", "count"]] + [[k, str(v)] for k, v in sorted(morphology_counts.items())]
+        table_data = [["morphology", "count"]] + [
+            [k, str(v)] for k, v in sorted(morphology_counts.items())
+        ]
         story.append(_make_table(table_data))
         story.append(Spacer(1, 12))
 
-        polymer_counts = Counter(record.get("polymer") for record in records if record.get("polymer"))
+        polymer_counts = Counter(
+            record.get("polymer") for record in records if record.get("polymer")
+        )
         if polymer_counts:
             story.append(Paragraph("Polymer distribution", styles["Heading2"]))
-            table_data = [["polymer", "count"]] + [[k, str(v)] for k, v in sorted(polymer_counts.items())]
+            table_data = [["polymer", "count"]] + [
+                [k, str(v)] for k, v in sorted(polymer_counts.items())
+            ]
             story.append(_make_table(table_data))
             story.append(Spacer(1, 12))
 
@@ -61,8 +77,8 @@ def build_report_pdf(records: list[dict], title: str = "Microplastic Analysis Re
 
 
 def _make_table(table_data):
-    from reportlab.platypus import Table, TableStyle
     from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
 
     table = Table(table_data)
     table.setStyle(

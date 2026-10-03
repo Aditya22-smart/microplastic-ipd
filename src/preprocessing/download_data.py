@@ -104,7 +104,7 @@ def _http_bytes(url: str, retries: int = DEFAULT_RETRIES) -> bytes:
                 url,
                 headers={"User-Agent": "microplastic-ipd/1.0"},
             )
-            with urllib.request.urlopen(  # nosec B310 - URL is a hardcoded constant
+            with urllib.request.urlopen(  # nosec B310 - callers pass hardcoded dataset URLs
                 request, timeout=DOWNLOAD_TIMEOUT_SEC
             ) as resp:
                 return resp.read()
@@ -119,7 +119,12 @@ def download_file(url: str, dest: Path, retries: int = DEFAULT_RETRIES) -> bool:
     """Download ``url`` to ``dest``. Returns True when the file is on disk.
 
     Skips already-downloaded files (non-empty) so reruns are cheap.
+    Only ``https``/``http`` URLs are accepted; anything else (file://, ftp://,
+    custom schemes) is rejected so a bad constant cannot read the local disk.
     """
+    scheme = urllib.parse.urlparse(url).scheme
+    if scheme not in ("http", "https"):
+        raise ValueError(f"refusing to download non-http(s) URL: {url!r}")
     if dest.exists() and dest.stat().st_size > 0:
         return True
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -130,11 +135,12 @@ def download_file(url: str, dest: Path, retries: int = DEFAULT_RETRIES) -> bool:
                 url,
                 headers={"User-Agent": "microplastic-ipd/1.0"},
             )
-            with urllib.request.urlopen(
-                request, timeout=DOWNLOAD_TIMEOUT_SEC
-            ) as resp, dest.open(  # nosec B310
-                "wb"
-            ) as handle:
+            with (
+                urllib.request.urlopen(  # nosec B310 - scheme validated above
+                    request, timeout=DOWNLOAD_TIMEOUT_SEC
+                ) as resp,
+                dest.open("wb") as handle,  # nosec B310
+            ):
                 shutil.copyfileobj(resp, handle)
             return True
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:

@@ -64,7 +64,9 @@ def sample_level_split(spectra, labels, sample_ids, test_size=0.2, random_state=
             "At least 2 unique samples/images are required for a sample-level train/test split."
         )
 
-    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    splitter = GroupShuffleSplit(
+        n_splits=1, test_size=test_size, random_state=random_state
+    )
     train_idx, test_idx = next(splitter.split(spectra, labels, groups=sample_ids))
 
     return (
@@ -85,8 +87,12 @@ def load_c4_csv(path):
     y_cols = [c for c in df.columns if c.startswith("Data(y)")]
     wavenumbers = df[x_cols].iloc[0].to_numpy(dtype=np.float32) if x_cols else None
     spectra = df[y_cols].to_numpy(dtype=np.float32)
-    label_col = next((c for c in df.columns if c.lower() in {"label", "class", "polymer"}), None)
-    labels = df[label_col].to_numpy() if label_col else np.zeros(len(spectra), dtype=int)
+    label_col = next(
+        (c for c in df.columns if c.lower() in {"label", "class", "polymer"}), None
+    )
+    labels = (
+        df[label_col].to_numpy() if label_col else np.zeros(len(spectra), dtype=int)
+    )
     class_names = sorted(np.unique(labels).tolist())
     return spectra, wavenumbers, labels, class_names
 

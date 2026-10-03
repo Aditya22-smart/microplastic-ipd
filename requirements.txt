@@ -1,3 +1,10 @@
+# Colab / GPU-machine dependencies. Loose ranges on purpose — Colab supplies its
+# own CUDA build of torch and must NOT be pinned to the local CPU wheel.
+#
+# Local development uses uv instead, which resolves from pyproject.toml + uv.lock:
+#     uv sync
+#
+# Keep the package names here in sync with pyproject.toml [project.dependencies].
 torch>=2.0.0
 torchvision>=0.15.0
 ultralytics>=8.3.0          # YOLOv11 + YOLO26

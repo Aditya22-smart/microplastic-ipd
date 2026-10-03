@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import warnings
+
 import timm
 import torch
 from torch import nn
+
+#: timm backbone used for the morphology classifier.
+BACKBONE_NAME = "mobilenetv3_small_100"
+#: Side length the backbone is probed with to measure its pooled feature width.
+PROBE_SIZE = 224
 
 
 class VisionTower(nn.Module):
@@ -14,16 +21,24 @@ class VisionTower(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.backbone = timm.create_model(
-            "mobilenetv3_small_100",
+            BACKBONE_NAME,
             pretrained=pretrained,
             num_classes=0,
             global_pool="avg",
         )
-        feat_dim = getattr(self.backbone, "num_features", None)
-        if feat_dim is None:  # empirical fallback — robust to timm API drift
-            with torch.no_grad():
-                feat_dim = self.backbone(torch.zeros(1, 3, 224, 224)).shape[1]
-        self.feat_dim = int(feat_dim)
+        # ``backbone.num_features`` is unreliable: on timm 1.0.x
+        # ``mobilenetv3_small_100`` advertises 576 while the pooled output is
+        # actually 1024, which silently builds a head with the wrong input size
+        # and blows up on the first forward pass. Measure instead of trusting.
+        self.feat_dim = self._measure_feat_dim()
+        declared = getattr(self.backbone, "num_features", None)
+        if declared is not None and int(declared) != self.feat_dim:
+            warnings.warn(
+                f"{BACKBONE_NAME}: backbone.num_features={declared} disagrees "
+                f"with measured output {self.feat_dim}; using measured value.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self.head = nn.Sequential(
             nn.Linear(self.feat_dim, 256),
             nn.LayerNorm(256),
@@ -33,6 +48,17 @@ class VisionTower(nn.Module):
         if pretrained:
             self.freeze_backbone(freeze=True)
 
+    def _measure_feat_dim(self) -> int:
+        """Run one dummy forward pass to learn the pooled feature width."""
+        was_training = self.backbone.training
+        self.backbone.eval()
+        try:
+            with torch.no_grad():
+                probe = torch.zeros(1, 3, PROBE_SIZE, PROBE_SIZE)
+                return int(self.backbone(probe).shape[1])
+        finally:
+            self.backbone.train(was_training)
+
     def freeze_backbone(self, freeze: bool = True) -> None:
         """Freeze (``freeze=True``) or unfreeze every backbone parameter."""
         for param in self.backbone.parameters():
@@ -40,7 +66,8 @@ class VisionTower(nn.Module):
 
     def unfreeze_last_blocks(self, n: int = 4) -> None:
         """Unfreeze the last ``n`` backbone blocks (Guide Day 5, run 2)."""
-        blocks = list(self.backbone.blocks)
+        # timm stubs type `blocks` as a union; it is a ModuleList at runtime.
+        blocks = list(self.backbone.blocks)  # type: ignore[arg-type]
         for block in blocks[-n:]:
             for param in block.parameters():
                 param.requires_grad = True

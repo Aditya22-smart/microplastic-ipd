@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-from pathlib import Path
 from typing import Any
 
 from src.detection.inference import detect_and_crop

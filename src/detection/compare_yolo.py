@@ -26,12 +26,17 @@ def evaluate_model(name: str, weights: Path, data: Path) -> dict:
         "model": name,
         "mAP50": round(float(metrics.box.map50), 4),
         "mAP50_95": round(float(metrics.box.map), 4),
-        "params": int(sum(p.numel() for p in model.model.parameters())),
+        # ultralytics stubs type `YOLO.model` loosely; it is an nn.Module here.
+        "params": int(
+            sum(p.numel() for p in model.model.parameters())  # type: ignore[union-attr]
+        ),
         "inference_ms": round(float(metrics.speed["inference"]), 2),
     }
 
 
-def build_table(data: Path = DEFAULT_DATA, out: Path = DEFAULT_OUT, models: dict | None = None) -> list[dict]:
+def build_table(
+    data: Path = DEFAULT_DATA, out: Path = DEFAULT_OUT, models: dict | None = None
+) -> list[dict]:
     rows = []
     for name, weights in (models or MODEL_FILES).items():
         if not Path(weights).is_file():

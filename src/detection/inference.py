@@ -57,11 +57,13 @@ def _canonical_class(name: str) -> str:
     return LEGACY_CLASS_MAP.get(str(name).strip().lower(), str(name).strip().lower())
 
 
-def detect_and_crop(image_path, model_name: str = DEFAULT_MODEL, conf_threshold: float = CONF_THRESHOLD) -> list[dict]:
+def detect_and_crop(
+    image_path, model_name: str = DEFAULT_MODEL, conf_threshold: float = CONF_THRESHOLD
+) -> list[dict]:
     model = _load_model(model_name)
     image = Image.open(image_path).convert("RGB")
     results = model.predict(source=np.array(image), conf=conf_threshold, verbose=False)
-    output = []
+    output: list[dict] = []
     if not results:
         return output
     result = results[0]
@@ -86,7 +88,9 @@ def detect_and_crop(image_path, model_name: str = DEFAULT_MODEL, conf_threshold:
             {
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "confidence": round(conf, 4),
-                "class": _canonical_class(names[cls_idx] if isinstance(names, dict) else names[cls_idx]),
+                "class": _canonical_class(
+                    names[cls_idx] if isinstance(names, dict) else names[cls_idx]
+                ),
                 "crop_img": crop,
                 "crop_path": str(crop_path),
             }

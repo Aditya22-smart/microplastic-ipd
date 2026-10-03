@@ -19,8 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:  # allow `python src/models/...py` from anywhere
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.models.vision_tower import VisionTower
-from src.preprocessing.image_preprocess import get_eval_transform
+from src.models.vision_tower import VisionTower  # noqa: E402
+from src.preprocessing.image_preprocess import get_eval_transform  # noqa: E402
 
 DEFAULT_WEIGHTS = REPO_ROOT / "weights" / "mobilenetv3_morphology_best.pth"
 

@@ -27,14 +27,20 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
         import tempfile
 
         yaml_path = Path(data)
-        dataset_root = Path(yaml.safe_load(yaml_path.read_text(encoding="utf-8")).get("path", yaml_path.parent))
+        dataset_root = Path(
+            yaml.safe_load(yaml_path.read_text(encoding="utf-8")).get(
+                "path", yaml_path.parent
+            )
+        )
         if not dataset_root.is_absolute():
             dataset_root = (yaml_path.parent / dataset_root).resolve()
         tmp = Path(tempfile.mkdtemp(prefix="yolo26_data_"))
         shutil.copytree(dataset_root, tmp / dataset_root.name, dirs_exist_ok=True)
         new_yaml = tmp / "microplastic.yaml"
         new_yaml.write_text(
-            yaml_path.read_text(encoding="utf-8").replace(str(dataset_root), str(tmp / dataset_root.name)),
+            yaml_path.read_text(encoding="utf-8").replace(
+                str(dataset_root), str(tmp / dataset_root.name)
+            ),
             encoding="utf-8",
         )
         data = str(new_yaml)

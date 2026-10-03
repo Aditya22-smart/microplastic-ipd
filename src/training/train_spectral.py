@@ -54,7 +54,9 @@ def build_model(config: dict) -> torch.nn.Module:
     return SpectralTower(num_classes=len(classes), input_bands=input_bands)
 
 
-def _load_arrays(data_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _load_arrays(
+    data_dir: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     train_x = np.load(data_dir / "train_spectra.npy")
     train_y = np.load(data_dir / "train_labels.npy")
     val_path_x = data_dir / "val_spectra.npy"
@@ -80,9 +82,13 @@ def train_loop(
 
     counts = np.bincount(train_y, minlength=int(classes)).astype(np.float32)
     counts = np.where(counts == 0, 1.0, counts)
-    weights = torch.tensor(counts.sum() / (len(counts) * counts), dtype=torch.float32, device=device)
+    weights = torch.tensor(
+        counts.sum() / (len(counts) * counts), dtype=torch.float32, device=device
+    )
     criterion = torch.nn.CrossEntropyLoss(weight=weights)
-    optimizer = torch.optim.NAdam(model.parameters(), lr=float(config["training"]["learning_rate"]))
+    optimizer = torch.optim.NAdam(
+        model.parameters(), lr=float(config["training"]["learning_rate"])
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=50, eta_min=1e-6
     )
@@ -119,7 +125,14 @@ def train_loop(
         if use_wandb:
             import wandb
 
-            wandb.log({"epoch": epoch, "train/loss": float(loss), "val/macro_f1": val_f1, "val/loss": val_loss})
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    "train/loss": float(loss),
+                    "val/macro_f1": val_f1,
+                    "val/loss": val_loss,
+                }
+            )
         print(f"epoch {epoch:3d}  loss {float(loss):.4f}  val_f1 {val_f1:.4f}")
         if val_f1 > best_f1:
             best_f1 = val_f1

@@ -30,11 +30,15 @@ An automated system that detects, localizes, and classifies microplastic particl
 - **Tracking:** Weights & Biases (wandb)
 - **Output:** Streamlit, Plotly, ReportLab
 - **Quality gates:** Black, Ruff, Mypy, Bandit (CI)
+- **Environment:** uv (locked `pyproject.toml` + `uv.lock`)
 
 ## 📂 Folder Structure
 ```text
 microplastic-ipd/
 ├── configs/                  # YOLO + shared training hyperparameters
+├── pyproject.toml            # Dependencies + tool config (authoritative)
+├── uv.lock                   # Exact resolved versions (committed)
+├── requirements.txt          # Colab-only mirror of pyproject (loose ranges)
 ├── data/
 │   ├── raw/                  # (Gitignored) Original datasets (Moore, PEESE, Zenodo, ...)
 │   └── processed/            # (Gitignored) Morphology splits, spectra .npy, scaler.pkl
@@ -53,16 +57,42 @@ microplastic-ipd/
 
 ## 🚀 Getting Started
 
+Local development uses **[uv](https://docs.astral.sh/uv/)**. It resolves from
+`pyproject.toml` + `uv.lock`, so everyone gets byte-identical versions and one
+command sets up the environment.
+
 ```bash
-python -m venv venv
-# Windows: venv\Scripts\activate   ·  Mac/Linux: source venv/bin/activate
-pip install -r requirements.txt
-pip install ruff black mypy pytest bandit
+# 1. Install uv (skip if you already have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Create the venv and install everything from the lock file
+uv sync
+
+# 3. Quality gates (dev group is installed by `uv sync` by default)
+uv run black --check src tests
+uv run ruff check src tests
+uv run pytest
 ```
+
+Run any script inside that environment — no need to activate anything:
+
+```bash
+uv run python -m src.training.train_morphology --seed 42
+uv run streamlit run src/output/dashboard.py
+```
+
+> **No GPU on your machine?** That is fine and expected. `uv sync` installs the
+> **CPU** build of PyTorch (~200 MB instead of ~2.5 GB). Training runs on Colab;
+> your laptop only runs inference and the dashboard. See
+> [Colab](#-google-colab--vs-code-integration-train-on-colab-code-locally).
+
+> **On Colab?** Keep using `pip install -r requirements.txt`. Do **not** use
+> `uv sync` there — Colab supplies its own CUDA build of PyTorch, and the local
+> lock file pins the CPU wheel.
 
 ### 1. Download the morphology dataset (Moore Institute + PEESEgroup)
 ```bash
-python src/preprocessing/download_data.py all --workers 12
+uv run python -m src.preprocessing.download_data all --workers 12
 ```
 This fetches `image_metadata.csv` from the Moore Institute One4All repo, downloads the
 morphology-labelled images (Sphere/Fragment/Fiber/Film/Foam) from their public CDN, adds the
@@ -73,17 +103,17 @@ morphology-labelled images (Sphere/Fragment/Fiber/Film/Foam) from their public C
 
 ### 2. Train the morphology classifier (MobileNetV3)
 ```bash
-python src/training/train_morphology.py --seed 42 --wandb
+uv run python -m src.training.train_morphology --seed 42 --wandb
 ```
 
 ### 3. Train the polymer classifier (1D-CNN)
 ```bash
-python src/training/train_spectral.py --seed 42 --svm-baseline --wandb
+uv run python -m src.training.train_spectral --seed 42 --svm-baseline --wandb
 ```
 
 ### 4. Run the dashboard
 ```bash
-streamlit run src/output/dashboard.py
+uv run streamlit run src/output/dashboard.py
 ```
 
 ## 🤝 Contributor Guidelines
@@ -93,10 +123,9 @@ We use a strict branching and pull-request workflow. **Never commit directly to 
 1. **Clone & branch** — teams use `naman/detection`, `kunsh/spectral`, `rohan/vision`, `aditya/integration`.
 2. **Code & test** — run the local quality gates before pushing:
    ```bash
-   black .
-   ruff check .
-   mypy src/ --ignore-missing-imports
-   pytest tests/
+   uv run black --check src tests
+   uv run ruff check src tests
+   uv run pytest
    ```
 3. **Commit** — `[module] brief description` (e.g. `[download] moore + peese split script`).
 4. **PR** — open against `main`, request review from a teammate, include the wandb link.
