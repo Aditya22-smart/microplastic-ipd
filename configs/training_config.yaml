@@ -1,0 +1,59 @@
+# Shared classification hyperparameters — authority for ALL classification training.
+# Source: IPD_Project_Guide.md (Section 5: Kunsh, Section 6: Rohan) + AGENT.md Section 5.
+# Splits are always by SAMPLE/IMAGE ID — never by pixel (leakage rule).
+
+training:
+  epochs: 50
+  batch_size: 32
+  optimizer: nadam
+  learning_rate: 1e-3
+  lr_scheduler: cosine_annealing
+  weight_decay: 1e-4
+  early_stopping_patience: 10
+  random_seed: 42
+
+model:
+  vision_backbone: mobilenetv3_small_100
+  spectral_input_bands: 600
+
+data:
+  image_size: 224
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+  split_by: sample            # CRITICAL: never split by pixel
+  morphology_classes: [sphere, fragment, fiber, film, foam]
+  polymer_classes: [PE, PP, PS, PMMA, PAN]
+  class_weights_path: data/processed/morphology/class_weights.json
+
+# Pipeline 1B — MobileNetV3 morphology (Rohan). Progressive unfreezing:
+#   1-10  : backbone frozen, head only          lr=1e-3
+#   11-30 : unfreeze last 4 blocks (differential NAdam)  blocks 1e-4 / head 1e-3
+#   31-50 : full fine-tune                      lr=1e-5
+morphology:
+  freeze_epochs: 10
+  unfreeze_epochs: 30
+  full_finetune_epochs: 50
+  unfreeze_blocks: 4          # last-4-blocks unfreeze (run 2)
+  freeze_lr: 1e-3
+  unfreeze_lr: 1e-4
+  head_lr: 1e-3
+  full_finetune_lr: 1e-5
+  checkpoint: weights/mobilenetv3_morphology_best.pth
+  baseline: resnet18            # H2: fine-tuned vs from-scratch McNemar
+
+# Pipeline 2B — 1D-CNN polymer (Kunsh). NAdam + cosine T_max=50 eta_min=1e-6.
+spectral:
+  conv_channels: [64, 128, 256]
+  kernel_sizes: [7, 5, 3]
+  fc_hidden: 256
+  checkpoint: weights/spectral_1dcnn_best.pth
+  baseline: svm                # H3: 1D-CNN vs SVM on FLOPP-e OOD (Wilcoxon)
+
+# Preprocessing constants (must match spectral_preprocess.py)
+preprocessing:
+  savgol_window: 11
+  savgol_polyorder: 2
+  water_vapour_bands: [280, 320]
+  normalize: snv
+  spectra_dir: data/processed/spectra
