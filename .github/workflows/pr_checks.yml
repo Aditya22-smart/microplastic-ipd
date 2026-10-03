@@ -2,9 +2,9 @@ name: PR Pipeline (Quality & Security)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "dev" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "dev" ]
 
 jobs:
   quality-enforcement:
@@ -12,46 +12,43 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.10'
-      - name: Install Linting Tools
-        run: pip install black ruff pytest
+          enable-cache: true
+      - name: Install dev tooling
+        # pyproject sets `package = false`, so uv installs deps only and never
+        # tries to build the repo itself. Only the dev group is needed here.
+        run: uv sync --only-group dev
       - name: Check Formatting (Black)
-        run: black --check src/ tests/
+        run: uv run --no-sync black --check src/ tests/
       - name: Check Linting (Ruff)
-        run: ruff check src/ tests/
+        run: uv run --no-sync ruff check src/ tests/
       - name: Run Tests (Pytest)
-        run: pytest tests/ -q --disable-warnings
+        run: uv run --no-sync pytest tests/ -q --disable-warnings
 
   type-checking:
     name: Static Type Checking
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.10'
-      - name: Install Mypy
-        run: pip install mypy
+          enable-cache: true
       - name: Run Mypy
-        run: mypy src/ --ignore-missing-imports
+        # --no-project keeps mypy outside the locked env so the multi-GB torch
+        # wheel is not downloaded just to type-check.
+        run: uvx mypy src/ --ignore-missing-imports
 
   security-audit:
     name: Dependency & Code Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.10'
-      - name: Install Security Tools
-        run: pip install pip-audit bandit
-      - name: Audit Dependencies
+          enable-cache: true
+      - name: Audit dependencies
         # Only fail if critical vulnerabilities are found, otherwise warn.
-        run: pip-audit -r requirements.txt || true
-      - name: Scan Code for Security Flaws
-        run: bandit -r src/ -ll -ii
+        run: uvx pip-audit --requirement requirements.txt || true
+      - name: Scan code for security flaws
+        run: uvx bandit -r src/ -ll -ii

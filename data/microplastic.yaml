@@ -1,0 +1,8 @@
+# Merged YOLO detection dataset (Roboflow + Panats + IAM + kueranan_100 + Detection-v5).
+# Class names are canonicalised to match the AGENT.md contract.
+path: data/processed/images
+train: train/images
+val: valid/images
+test: test/images
+nc: 3
+names: [microplastic, foam, bead]
