@@ -1,13 +1,4 @@
-"""Albumentations pipelines for morphology images (Pipeline 1B, Rohan's lane).
-
-Train pipeline: HorizontalFlip / VerticalFlip / RandomRotate90 / ColorJitter
-(p=0.5) + ImageNet normalisation — the Guide's Day-3 augmentation plan.
-Val/test pipeline: resize + ImageNet normalisation only (no augmentation).
-
-Both composes accept RGB uint8 ``(H, W, 3)`` arrays and return CHW float
-tensors via the final ``ToTensorV2`` step — numerically equivalent to
-torchvision's ``Normalize``-after-``ToTensor`` composition.
-"""
+"""Albumentations pipelines for morphology images (Pipeline 1B)."""
 
 from __future__ import annotations
 

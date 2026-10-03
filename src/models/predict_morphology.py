@@ -1,15 +1,8 @@
-"""Standalone morphology prediction for cropped particle ROIs (Pipeline 1B).
-
-This is Rohan's Day-7 deliverable that Aditya's ``full_pipeline.py`` imports.
-The function signature is the *agreed integration contract* — do not change it
-without team agreement (IPD Project Guide, Section 6, Day 7):
+"""Morphology prediction for cropped particle ROIs (Pipeline 1B).
 
     predict_morphology(image_crop) -> {"morphology": str, "confidence": float}
 
-Input ``image_crop``: PIL Image or numpy HWC RGB array (the output format of
-Naman's ``detect_and_crop``). Weights are loaded automatically from
-``weights/mobilenetv3_morphology_best.pth`` (train first, or run the Colab
-notebook, then place the checkpoint in ``weights/``).
+Input ``image_crop``: PIL Image or numpy HWC RGB array.
 """
 
 from __future__ import annotations

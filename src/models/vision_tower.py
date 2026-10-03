@@ -1,19 +1,4 @@
-"""MobileNetV3-Small morphology classifier (Pipeline 1B, Rohan's lane).
-
-timm ``mobilenetv3_small_100`` feature extractor (ImageNet-pretrained,
-``num_classes=0``, ``global_pool='avg'``) with a projection head::
-
-    backbone -> [B, feat_dim] -> Linear(feat_dim->256) -> LayerNorm -> ReLU
-                              -> Linear(256->5) -> [B, 5]
-
-Classes (AGENT.md 3.1): sphere / fragment / fiber / film / foam.
-
-FEATURE DIMENSION NOTE
-``mobilenetv3_small_100`` keeps its 1x1 ``conv_head`` (576 -> 1024 channels)
-even with ``num_classes=0``, so the backbone emits 1024 features. The head is
-sized from ``backbone.num_features`` at runtime via ``self.feat_dim`` — never
-hardcode this value (an empirical fallback guards against timm API drift).
-"""
+"""MobileNetV3-Small morphology classifier (Pipeline 1B)."""
 
 from __future__ import annotations
 

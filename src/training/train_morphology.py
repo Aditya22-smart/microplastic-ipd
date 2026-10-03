@@ -1,25 +1,4 @@
-"""Training loop for the morphology classifier (Pipeline 1B).
-
-Implements the Guide's progressive-unfreezing schedule (Section 6):
-
-    epochs  1-10 : backbone frozen — projection head only (lr=1e-3)
-    epochs 11-30 : unfreeze last 4 backbone blocks (1e-4 / head 1e-3)
-    epochs 31-50 : full fine-tune (lr=1e-5)
-
-Optimizer ``torch.optim.NAdam``, scheduler ``CosineAnnealingLR``, loss
-``CrossEntropyLoss`` weighted by ``class_weights.json`` (inverse frequency).
-
-Checkpoint: ``<output>/weights/mobilenetv3_morphology_best.pth`` (val macro-F1).
-Deliverables (Task 1, confusion-matrix export):
-    ``<output>/results/classification/confusion_morphology.png``
-    ``<output>/results/classification/per_class_f1.json``
-    ``<output>/results/classification/training_curves.png``
-
-NOTE: this is the Task-1 implementation — the notebook
-(``notebooks/06_morphology_training.ipynb``) split into modules. The ResNet18
-baseline + H2 McNemar test and the final tuning/verification pass happen in the
-end-of-project phase (AGENT.md 6 / 8).
-"""
+"""Training loop for the morphology classifier (Pipeline 1B)."""
 
 from __future__ import annotations
 
