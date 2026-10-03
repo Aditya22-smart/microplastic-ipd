@@ -1,6 +1,6 @@
 torch>=2.0.0
 torchvision>=0.15.0
-ultralytics>=8.3.0          # YOLOv11 + YOLO26
+ultralytics>=8.3.0          # YOLOv8 + YOLO26
 timm>=0.9.0                 # MobileNetV3 pretrained weights
 albumentations>=1.4.1       # Image augmentation (A.ColorJitter needs 1.4.1+)
 roboflow>=1.1.0             # Dataset download
@@ -18,3 +18,4 @@ streamlit>=1.28.0           # Web dashboard
 plotly>=5.15.0              # Interactive plots
 reportlab>=4.0.0            # PDF generation
 statsmodels>=0.14.0         # McNemar's test
+pytest>=7.4.0               # Running unit tests
