@@ -1,189 +1,768 @@
-"""Training loop for the polymer spectral classifier (Pipeline 2B).
-
-    Optimizer : torch.optim.NAdam(model.parameters(), lr=1e-3)
-    Scheduler : CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-6)
-    Loss      : nn.CrossEntropyLoss with class weights
-    Early stop: patience=10 on val macro-F1
-
-An SVM baseline (sklearn.svm.SVC) is trained on the same preprocessed spectra
-for Hypothesis H3.
-
-Checkpoint: weights/spectral_1dcnn_best.pth (selected on val macro-F1).
-"""
-
-from __future__ import annotations
-
-import argparse
+import os
 import random
-from collections.abc import Sequence
-from pathlib import Path
-
 import numpy as np
 import torch
-import yaml
-from sklearn.metrics import f1_score
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.svm import SVC
+import wandb
+from src.models.spectral_tower import SpectralTower
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = REPO_ROOT / "configs" / "training_config.yaml"
-DEFAULT_DATA_DIR = REPO_ROOT / "data" / "processed" / "spectra"
-WEIGHTS_DIR = REPO_ROOT / "weights"
+TRAIN_SPECTRA = (
+    "data/processed/spectra/c4_dedup_train_spectra.npy"
+)
+TRAIN_LABELS = (
+    "data/processed/spectra/c4_dedup_train_labels.npy"
+)
+TRAIN_GROUPS = (
+    "data/processed/spectra/c4_dedup_train_groups.npy"
+)
 
-POLYMER_CLASSES: tuple[str, ...] = ("PE", "PP", "PS", "PMMA", "PAN")
+TEST_SPECTRA = (
+    "data/processed/spectra/c4_dedup_test_spectra.npy"
+)
+TEST_LABELS = (
+    "data/processed/spectra/c4_dedup_test_labels.npy"
+)
+TEST_GROUPS = (
+    "data/processed/spectra/c4_dedup_test_groups.npy"
+)
 
+CHECKPOINT = (
+    "weights/spectral_1dcnn_dedup_best.pth"
+)
 
-def set_seed(seed: int) -> None:
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
+CLASSES = (
+    "HDPE",
+    "LDPE",
+    "PET",
+    "PP",
+    "PS",
+    "PVC",
+)
+
+CLASS_TO_INDEX = {
+    name: i
+    for i, name in enumerate(CLASSES)
+}
+
+SEED = 42
+
+EPOCHS = 50
+BATCH_SIZE = 32
+
+INITIAL_LR = 1e-3
+ETA_MIN = 1e-6
+T_MAX = 50
+
+WEIGHT_DECAY = 1e-4
+EARLY_STOPPING_PATIENCE = 10
+
+VAL_SIZE = 0.20
+
+def set_seed(seed=42):
     random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-def load_config(path: Path = DEFAULT_CONFIG) -> dict:
-    with path.open(encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+def load_data():
 
+    train_x = np.load(TRAIN_SPECTRA)
+    train_labels = np.load(TRAIN_LABELS)
+    train_groups = np.load(TRAIN_GROUPS)
 
-def build_model(config: dict) -> torch.nn.Module:
-    from src.models.spectral_tower import SpectralTower
+    test_x = np.load(TEST_SPECTRA)
+    test_labels = np.load(TEST_LABELS)
+    test_groups = np.load(TEST_GROUPS)
 
-    input_bands = int(config.get("model", {}).get("spectral_input_bands", 600))
-    classes = config.get("data", {}).get("polymer_classes") or list(POLYMER_CLASSES)
-    return SpectralTower(num_classes=len(classes), input_bands=input_bands)
-
-
-def _load_arrays(
-    data_dir: Path,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    train_x = np.load(data_dir / "train_spectra.npy")
-    train_y = np.load(data_dir / "train_labels.npy")
-    val_path_x = data_dir / "val_spectra.npy"
-    val_path_y = data_dir / "val_labels.npy"
-    if val_path_x.is_file() and val_path_y.is_file():
-        return train_x, train_y, np.load(val_path_x), np.load(val_path_y)
-    idx = np.random.default_rng(42).permutation(len(train_x))
-    split = int(0.85 * len(idx))
-    tr, va = idx[:split], idx[split:]
-    return train_x[tr], train_y[tr], train_x[va], train_y[va]
-
-
-def train_loop(
-    model: torch.nn.Module,
-    config: dict,
-    data_dir: Path = DEFAULT_DATA_DIR,
-    use_wandb: bool = False,
-) -> None:
-    train_x, train_y, val_x, val_y = _load_arrays(data_dir)
-    classes = train_y.max() + 1
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-
-    counts = np.bincount(train_y, minlength=int(classes)).astype(np.float32)
-    counts = np.where(counts == 0, 1.0, counts)
-    weights = torch.tensor(
-        counts.sum() / (len(counts) * counts), dtype=torch.float32, device=device
+    print("Train spectra:", train_x.shape)
+    print("Train labels:", train_labels.shape)
+    print(
+        "Train samples:",
+        len(np.unique(train_groups)),
     )
-    criterion = torch.nn.CrossEntropyLoss(weight=weights)
+
+    print("Test spectra:", test_x.shape)
+    print("Test labels:", test_labels.shape)
+    print(
+        "Test samples:",
+        len(np.unique(test_groups)),
+    )
+
+    print("Classes:", CLASSES)
+
+    train_test_group_overlap = (
+        set(train_groups) & set(test_groups)
+    )
+
+    print(
+        "Train/Test sample overlap:",
+        len(train_test_group_overlap),
+    )
+
+    if len(train_test_group_overlap) != 0:
+        raise RuntimeError(
+            "Data leakage detected: "
+            "train/test sample groups overlap."
+        )
+
+    train_hashes = {
+        row.tobytes()
+        for row in train_x
+    }
+
+    duplicate_count = sum(
+        row.tobytes() in train_hashes
+        for row in test_x
+    )
+
+    print(
+        "Exact train/test spectrum duplicates:",
+        duplicate_count,
+    )
+
+    if duplicate_count != 0:
+        raise RuntimeError(
+            "Data leakage detected: "
+            "exact train/test spectra overlap."
+        )
+
+    return (
+        train_x,
+        train_labels,
+        train_groups,
+        test_x,
+        test_labels,
+        test_groups,
+    )
+
+def encode_labels(labels):
+
+    return np.array(
+        [
+            CLASS_TO_INDEX[str(label)]
+            for label in labels
+        ],
+        dtype=np.int64,
+    )
+
+def make_train_val_split(
+    X,
+    y,
+    groups,
+):
+
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=VAL_SIZE,
+        random_state=SEED,
+    )
+
+    train_idx, val_idx = next(
+        splitter.split(
+            X,
+            y,
+            groups=groups,
+        )
+    )
+
+    return (
+        X[train_idx],
+        X[val_idx],
+        y[train_idx],
+        y[val_idx],
+        groups[train_idx],
+        groups[val_idx],
+    )
+
+def make_loaders(
+    train_x,
+    train_y,
+    val_x,
+    val_y,
+):
+
+    train_dataset = TensorDataset(
+        torch.from_numpy(train_x).float(),
+        torch.from_numpy(train_y).long(),
+    )
+
+    val_dataset = TensorDataset(
+        torch.from_numpy(val_x).float(),
+        torch.from_numpy(val_y).long(),
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+    )
+
+    return train_loader, val_loader
+
+def calculate_class_weights(labels):
+
+    counts = np.bincount(
+        labels,
+        minlength=len(CLASSES),
+    )
+
+    weights = len(labels) / (
+        len(CLASSES)
+        * np.maximum(counts, 1)
+    )
+
+    return torch.tensor(
+        weights,
+        dtype=torch.float32,
+    )
+
+def evaluate(
+    model,
+    loader,
+    criterion,
+    device,
+):
+
+    model.eval()
+
+    total_loss = 0.0
+
+    all_predictions = []
+    all_targets = []
+
+    with torch.no_grad():
+
+        for x, y in loader:
+
+            x = x.to(device)
+            y = y.to(device)
+
+            logits = model(x)
+
+            loss = criterion(
+                logits,
+                y,
+            )
+
+            total_loss += (
+                loss.item()
+                * x.size(0)
+            )
+
+            predictions = torch.argmax(
+                logits,
+                dim=1,
+            )
+
+            all_predictions.extend(
+                predictions.cpu().numpy()
+            )
+
+            all_targets.extend(
+                y.cpu().numpy()
+            )
+
+    average_loss = (
+        total_loss
+        / len(loader.dataset)
+    )
+
+    accuracy = accuracy_score(
+        all_targets,
+        all_predictions,
+    )
+
+    macro_f1 = f1_score(
+        all_targets,
+        all_predictions,
+        average="macro",
+        zero_division=0,
+    )
+
+    return (
+        average_loss,
+        accuracy,
+        macro_f1,
+    )
+
+def train_model(
+    train_loader,
+    val_loader,
+    class_weights,
+    device,
+):
+
+    model = SpectralTower(
+        num_classes=len(CLASSES)
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights.to(device)
+    )
+
     optimizer = torch.optim.NAdam(
-        model.parameters(), lr=float(config["training"]["learning_rate"])
+        model.parameters(),
+        lr=INITIAL_LR,
+        weight_decay=WEIGHT_DECAY,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=50, eta_min=1e-6
+
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=T_MAX,
+            eta_min=ETA_MIN,
+        )
     )
-    patience = int(config["training"].get("early_stopping_patience", 10))
-    epochs = int(config["training"]["epochs"])
-    batch_size = int(config["training"]["batch_size"])
-
-    if use_wandb:
-        import wandb
-
-        wandb.init(project="microplastic-ipd", name="spectral-1dcnn", config=config)
 
     best_f1 = -1.0
-    stale = 0
-    for epoch in range(1, epochs + 1):
+    best_epoch = 0
+    patience_counter = 0
+
+    os.makedirs(
+        os.path.dirname(CHECKPOINT),
+        exist_ok=True,
+    )
+
+    for epoch in range(
+        1,
+        EPOCHS + 1,
+    ):
+
         model.train()
-        perm = np.random.permutation(len(train_x))
-        for start in range(0, len(perm), batch_size):
-            batch = perm[start : start + batch_size]
-            xb = torch.from_numpy(train_x[batch]).float().to(device)
-            yb = torch.from_numpy(train_y[batch]).long().to(device)
+
+        running_loss = 0.0
+
+        for x, y in train_loader:
+
+            x = x.to(device)
+            y = y.to(device)
+
             optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
+
+            logits = model(x)
+
+            loss = criterion(
+                logits,
+                y,
+            )
+
             loss.backward()
+
             optimizer.step()
+
+            running_loss += (
+                loss.item()
+                * x.size(0)
+            )
+
         scheduler.step()
 
-        model.eval()
-        with torch.no_grad():
-            logits = model(torch.from_numpy(val_x).float().to(device))
-            preds = logits.argmax(dim=1).cpu().numpy()
-        val_f1 = float(f1_score(val_y, preds, average="macro"))
-        val_loss = float(criterion(logits, torch.from_numpy(val_y).long().to(device)))
-        if use_wandb:
-            import wandb
+        train_loss = (
+            running_loss
+            / len(train_loader.dataset)
+        )
 
-            wandb.log(
-                {
-                    "epoch": epoch,
-                    "train/loss": float(loss),
-                    "val/macro_f1": val_f1,
-                    "val/loss": val_loss,
-                }
-            )
-        print(f"epoch {epoch:3d}  loss {float(loss):.4f}  val_f1 {val_f1:.4f}")
+        (
+            val_loss,
+            val_accuracy,
+            val_f1,
+        ) = evaluate(
+            model,
+            val_loader,
+            criterion,
+            device,
+        )
+
+        current_lr = (
+            optimizer.param_groups[0]["lr"]
+        )
+
+        print(
+            f"Epoch {epoch:02d}/{EPOCHS} | "
+            f"train_loss={train_loss:.4f} | "
+            f"val_loss={val_loss:.4f} | "
+            f"val_acc={val_accuracy:.4f} | "
+            f"val_macro_f1={val_f1:.4f} | "
+            f"lr={current_lr:.7f}"
+        )
+
+        wandb.log(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_accuracy": val_accuracy,
+                "val_macro_f1": val_f1,
+                "learning_rate": current_lr,
+            }
+        )
+
         if val_f1 > best_f1:
+
             best_f1 = val_f1
-            stale = 0
-            WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+            best_epoch = epoch
+            patience_counter = 0
+
             torch.save(
-                {
-                    "model_state_dict": model.state_dict(),
-                    "classes": list(POLYMER_CLASSES),
-                    "input_bands": int(train_x.shape[1]),
-                },
-                WEIGHTS_DIR / "spectral_1dcnn_best.pth",
+                model.state_dict(),
+                CHECKPOINT,
             )
+
+            print(
+                "  Saved best checkpoint -> "
+                f"{CHECKPOINT}"
+            )
+
         else:
-            stale += 1
-            if stale >= patience:
-                print(f"early stopping at epoch {epoch}")
-                break
 
+            patience_counter += 1
 
-def train_svm_baseline(config: dict, data_dir: Path = DEFAULT_DATA_DIR) -> None:
-    train_x, train_y, val_x, val_y = _load_arrays(data_dir)
-    svm = SVC(kernel="rbf", class_weight="balanced")
-    svm.fit(train_x, train_y)
-    preds = svm.predict(val_x)
-    print(f"SVM val macro-F1: {f1_score(val_y, preds, average='macro'):.4f}")
+        if (
+            patience_counter
+            >= EARLY_STOPPING_PATIENCE
+        ):
 
+            print(
+                f"Early stopping at epoch {epoch}."
+            )
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="train_spectral")
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--data", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--svm-baseline", action="store_true")
-    return parser
+            break
 
+    print()
+    print(
+        "Best validation macro-F1:",
+        best_f1,
+    )
+    print(
+        "Best epoch:",
+        best_epoch,
+    )
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    config = load_config(args.config)
-    if args.epochs is not None:
-        config.setdefault("training", {})["epochs"] = args.epochs
-    set_seed(args.seed)
-    model = build_model(config)
-    train_loop(model, config, data_dir=args.data, use_wandb=args.wandb)
-    if args.svm_baseline:
-        train_svm_baseline(config, data_dir=args.data)
-    return 0
+    return best_f1
+
+def train_svm(
+    train_x,
+    train_y,
+    val_x,
+    val_y,
+):
+
+    print()
+    print("Training SVM baseline...")
+
+    svm = SVC(
+        kernel="rbf",
+        class_weight="balanced",
+        random_state=SEED,
+    )
+
+    svm.fit(
+        train_x,
+        train_y,
+    )
+
+    predictions = svm.predict(
+        val_x
+    )
+
+    accuracy = accuracy_score(
+        val_y,
+        predictions,
+    )
+
+    macro_f1 = f1_score(
+        val_y,
+        predictions,
+        average="macro",
+        zero_division=0,
+    )
+
+    print(
+        f"SVM val accuracy: "
+        f"{accuracy:.4f}"
+    )
+
+    print(
+        f"SVM val macro-F1: "
+        f"{macro_f1:.4f}"
+    )
+
+    wandb.log(
+        {
+            "svm_val_accuracy": accuracy,
+            "svm_val_macro_f1": macro_f1,
+        }
+    )
+
+    return svm
+
+def evaluate_test_set(
+    model,
+    test_x,
+    test_y,
+    device,
+):
+
+    test_dataset = TensorDataset(
+        torch.from_numpy(test_x).float(),
+        torch.from_numpy(test_y).long(),
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+    )
+
+    criterion = nn.CrossEntropyLoss()
+
+    (
+        loss,
+        accuracy,
+        macro_f1,
+    ) = evaluate(
+        model,
+        test_loader,
+        criterion,
+        device,
+    )
+
+    print()
+    print(
+        "FINAL HELD-OUT "
+        "DUPLICATE-FREE TEST RESULTS"
+    )
+    print("--------------------------------")
+
+    print(
+        f"Test loss:      {loss:.4f}"
+    )
+
+    print(
+        f"Test accuracy:  {accuracy:.4f}"
+    )
+
+    print(
+        f"Test macro-F1:  {macro_f1:.4f}"
+    )
+
+    wandb.log(
+        {
+            "test_loss": loss,
+            "test_accuracy": accuracy,
+            "test_macro_f1": macro_f1,
+        }
+    )
+
+    return (
+        loss,
+        accuracy,
+        macro_f1,
+    )
+
+def main():
+
+    set_seed(SEED)
+
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+    print("Device:", device)
+
+    wandb.init(
+        project="microplastic-ipd",
+        name="c4-spectral-1dcnn-deduplicated-seed-42",
+        config={
+            "dataset": "FTIR-PLASTIC-c4",
+            "dataset_version": "deduplicated",
+            "classes": list(CLASSES),
+            "input_bands": 3736,
+            "epochs": EPOCHS,
+            "batch_size": BATCH_SIZE,
+            "optimizer": "NAdam",
+            "learning_rate": INITIAL_LR,
+            "weight_decay": WEIGHT_DECAY,
+            "scheduler": "CosineAnnealingLR",
+            "scheduler_T_max": T_MAX,
+            "scheduler_eta_min": ETA_MIN,
+            "early_stopping_patience": (
+                EARLY_STOPPING_PATIENCE
+            ),
+            "seed": SEED,
+            "preprocessing": [
+                "Savitzky-Golay "
+                "window=11 polyorder=2",
+                "zero bands 280-320",
+                "SNV",
+            ],
+            "split": "sample-level",
+            "duplicate_handling": (
+                "exact spectral duplicates "
+                "removed before split"
+            ),
+        },
+    )
+
+    (
+        train_x,
+        train_labels,
+        train_groups,
+        test_x,
+        test_labels,
+        test_groups,
+    ) = load_data()
+
+    train_y = encode_labels(
+        train_labels
+    )
+
+    test_y = encode_labels(
+        test_labels
+    )
+
+    (
+        cnn_train_x,
+        cnn_val_x,
+        cnn_train_y,
+        cnn_val_y,
+        cnn_train_groups,
+        cnn_val_groups,
+    ) = make_train_val_split(
+        train_x,
+        train_y,
+        train_groups,
+    )
+
+    print()
+
+    print(
+        "CNN train:",
+        cnn_train_x.shape,
+    )
+
+    print(
+        "CNN validation:",
+        cnn_val_x.shape,
+    )
+
+    print(
+        "CNN train samples:",
+        len(
+            np.unique(
+                cnn_train_groups
+            )
+        ),
+    )
+
+    print(
+        "CNN validation samples:",
+        len(
+            np.unique(
+                cnn_val_groups
+            )
+        ),
+    )
+
+    overlap = (
+        set(cnn_train_groups)
+        & set(cnn_val_groups)
+    )
+
+    print(
+        "Train/validation sample overlap:",
+        len(overlap),
+    )
+
+    if len(overlap) != 0:
+        raise RuntimeError(
+            "Data leakage detected: "
+            "train/validation sample groups overlap."
+        )
+
+    (
+        train_loader,
+        val_loader,
+    ) = make_loaders(
+        cnn_train_x,
+        cnn_train_y,
+        cnn_val_x,
+        cnn_val_y,
+    )
+
+    class_weights = (
+        calculate_class_weights(
+            cnn_train_y
+        )
+    )
+
+    print(
+        "Class weights:",
+        class_weights.numpy(),
+    )
+
+    best_f1 = train_model(
+        train_loader,
+        val_loader,
+        class_weights,
+        device,
+    )
+
+    model = SpectralTower(
+        num_classes=len(CLASSES)
+    ).to(device)
+
+    model.load_state_dict(
+        torch.load(
+            CHECKPOINT,
+            map_location=device,
+        )
+    )
+
+    model.eval()
+
+    svm = train_svm(
+        cnn_train_x,
+        cnn_train_y,
+        cnn_val_x,
+        cnn_val_y,
+    )
+
+    evaluate_test_set(
+        model,
+        test_x,
+        test_y,
+        device,
+    )
+
+    wandb.log(
+        {
+            "best_val_macro_f1": best_f1,
+        }
+    )
+
+    wandb.finish()
+
+    print()
+    print(
+        "C4 deduplicated spectral "
+        "training complete."
+    )
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

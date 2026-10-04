@@ -120,3 +120,11 @@ def overlay_cam_on_image(
     base = np.array(image)
     blended = (alpha * heatmap + (1 - alpha) * base).astype(np.uint8)
     return Image.fromarray(blended)
+
+
+def compute_spectral_saliency(model, spectrum, target_class=None, device=None):
+    """Vanilla gradient saliency for spectral 1D-CNN (Pipeline 2B - Day 8)."""
+    from src.evaluation.spectral_saliency import compute_spectral_saliency as _css
+
+    return _css(model, spectrum, target_class=target_class, device=device)
+
