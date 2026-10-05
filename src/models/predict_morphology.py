@@ -72,20 +72,38 @@ def _to_rgb_uint8(image_crop: Any) -> np.ndarray:
     return array
 
 
+def load_morphology_model(
+    weights_path: Path | None = None,
+) -> tuple[VisionTower, tuple[str, ...], torch.device]:
+    """Public accessor for the cached morphology model.
+
+    Returns ``(model, classes, device)``. Used by the Grad-CAM visualiser so it
+    does not need to reach into this module's private loader.
+    """
+    resolved = DEFAULT_WEIGHTS if weights_path is None else Path(weights_path)
+    return _load_model(resolved)
+
+
 def predict_morphology(
-    image_crop: Any, weights_path: Path = DEFAULT_WEIGHTS
+    image_crop: Any, weights_path: Path | None = None
 ) -> dict[str, Any]:
     """Predict the morphology class of a single cropped particle ROI.
 
     Args:
         image_crop: PIL Image or numpy array (H, W, 3) in RGB — the ROI crop
             produced by ``src.detection.inference.detect_and_crop``.
-        weights_path: Path to ``mobilenetv3_morphology_best.pth``.
+        weights_path: Path to ``mobilenetv3_morphology_best.pth``. Defaults to
+            :data:`DEFAULT_WEIGHTS`, resolved at call time so tests can point
+            the module at a temporary checkpoint.
 
     Returns:
         {"morphology": str, "confidence": float}
     """
-    model, classes, device = _load_model(weights_path)
+    # Resolve inside the body, not as a default argument: a default is bound at
+    # import time, so patching DEFAULT_WEIGHTS in a test would silently do
+    # nothing and the real checkpoint would load instead.
+    resolved = DEFAULT_WEIGHTS if weights_path is None else Path(weights_path)
+    model, classes, device = _load_model(resolved)
     transform = get_eval_transform(224)
     tensor = transform(image=_to_rgb_uint8(image_crop))["image"]
 

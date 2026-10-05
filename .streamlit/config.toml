@@ -1,0 +1,20 @@
+# Streamlit theme. Committed so the dashboard looks the same on every machine
+# instead of inheriting whatever the local install defaults to.
+#
+# primaryColor is teal on purpose: the detection boxes are red / green / blue, so
+# a UI accent in the same hue family would compete with the annotation the viewer
+# is meant to read first.
+
+[theme]
+primaryColor = "#0D9488"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F9"
+textColor = "#0F172A"
+font = "sans serif"
+
+[server]
+# WSL does not support inotify reliably; polling avoids a crash-loop on save.
+fileWatcherType = "poll"
+
+[browser]
+gatherUsageStats = false
