@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.stats import ttest_rel, wilcoxon
+from statsmodels.stats.contingency_tables import mcnemar
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results" / "hypothesis"
 
@@ -35,8 +36,6 @@ def h2_mcnemar(y_true, pred_finetuned, pred_scratch) -> dict:
     b = int(np.sum((pred_finetuned == y_true) & (pred_scratch != y_true)))
     c = int(np.sum((pred_finetuned != y_true) & (pred_scratch == y_true)))
     table = [[0, b], [c, 0]]
-    from statsmodels.stats.contingency_tables import mcnemar
-
     result = mcnemar(table, exact=True)
     return {
         "test": "McNemar",
