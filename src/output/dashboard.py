@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import sys
 from collections import Counter
+from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -39,6 +40,13 @@ from src.detection.inference import CONF_THRESHOLD, WEIGHTS  # noqa: E402
 from src.models.full_pipeline import analyze_image, analyze_spectrum  # noqa: E402
 from src.output.annotate import class_legend, draw_detections, to_hex  # noqa: E402
 from src.output.report_generator import build_report_pdf  # noqa: E402
+from src.output.theme import (  # noqa: E402
+    palette,
+    plotly_layout,
+    series_colours,
+    theme_css,
+)
+from src.output.viz import CONFIDENCE_BINS, field_stats, interpret  # noqa: E402
 
 st.set_page_config(page_title="Microplastic IPD", layout="wide")
 
@@ -57,6 +65,19 @@ MODEL_LABELS = {
 UPLOAD_DIR = Path("results") / "dashboard"
 
 
+def _themed(figure):
+    """Apply the palette to a Plotly figure.
+
+    ``st.plotly_chart`` has no ``layout=`` argument, so the overrides from
+    :func:`plotly_layout` are applied to the figure itself. Mutating here rather
+    than at each call site keeps every chart on the same palette, which is the
+    whole point -- a summary tab where one chart ignores the palette looks broken
+    even when each chart is individually correct.
+    """
+    figure.update_layout(**plotly_layout())
+    return figure
+
+
 def _legend_strip(records: list[dict]) -> None:
     """Render the colour key for the annotated image.
 
@@ -67,15 +88,31 @@ def _legend_strip(records: list[dict]) -> None:
     if not items:
         return
     counts = Counter(record["class"] for record in records)
+    # `unsafe_allow_html=True` is required: Streamlit defaults it to False and
+    # escapes the markup, so the legend rendered as visible
+    # `<span style="color:#286EE6...">&#9632;</span>` soup instead of coloured
+    # swatches. Safe here because every interpolated value is ours -- `to_hex`
+    # is clamped to `#RRGGBB` and the class name is HTML-escaped below. Nothing
+    # user-supplied reaches this string.
     swatches = "&nbsp;&nbsp;&nbsp;".join(
         f'<span style="color:{to_hex(color)};font-size:1.15em">&#9632;</span> '
-        f"&nbsp;{name} ({counts.get(name, 0)})"
+        f"&nbsp;{escape(name)} ({counts.get(name, 0)})"
         for name, color in items
     )
-    st.markdown(swatches)
+    st.markdown(swatches, unsafe_allow_html=True)
 
 
-# --- feature flag: sidebar toggle, seeded from the environment ---------------
+# --- palette ----------------------------------------------------------------
+# Single dark palette, applied on every run. `.streamlit/config.toml` already
+# tells Streamlit to serve dark; this stylesheet is what makes the elements
+# Streamlit does not theme from config -- metric cards, tabs, dataframe and
+# chart surfaces -- match. No toggle: there is no Python API to set Streamlit's
+# active theme (`st.context.theme` is read-only), so an in-app switch would have
+# to repaint the page, and the page is the thing a dark-mode toggle must not get
+# half-right.
+st.html(theme_css(), unsafe_allow_javascript=False)
+
+# --- sidebar ----------------------------------------------------------------
 with st.sidebar:
     st.header("Settings")
     if "spectral_on" not in st.session_state:
@@ -202,14 +239,16 @@ with tab_image:
             st.image(image, width="stretch")
         with result_col:
             st.markdown("**Detected**")
-            st.image(
-                annotated,
-                caption=(
-                    f"{len(records)} particle(s) via "
-                    f"{MODEL_LABELS.get(model_name, model_name)} "
-                    f"at conf ≥ {conf_threshold:.2f}"
+            st.image(annotated, width="stretch")
+            st.caption(
+                f"{len(records)} particle(s) · "
+                f"{MODEL_LABELS.get(model_name, model_name)} · "
+                f"conf ≥ {conf_threshold:.2f}",
+                help=(
+                    "The caption reports the detector actually used and the "
+                    "confidence floor actually applied, so a result can be "
+                    "reproduced from the screen alone."
                 ),
-                width="stretch",
             )
 
         if records:
@@ -236,6 +275,21 @@ with tab_image:
             )
 
             _legend_strip(records)
+
+            # Morphology mix as a bar rather than a fourth number: the dominant
+            # chip above says which class wins, this shows how much of the field
+            # it actually is. A 9-of-10 result and a 5-of-10 result both report
+            # the same dominant label, and they are not the same finding.
+            st.bar_chart(
+                {
+                    "particles": {
+                        name: count for name, count in morphology_counts.most_common()
+                    }
+                },
+                horizontal=True,
+                height=28 + 22 * len(morphology_counts),
+                color="#0D9488",
+            )
 
             st.subheader("Per-particle results")
             st.dataframe(
@@ -367,59 +421,263 @@ with tab_summary:
     )
 
     if records:
-        detection_counts = Counter(record["class"] for record in records)
-        morphology_counts = Counter(record["morphology"] for record in records)
-        mean_detection = sum(
-            float(record["detection_confidence"]) for record in records
-        ) / len(records)
-        mean_morphology = sum(
-            float(record["morphology_confidence"]) for record in records
-        ) / len(records)
-        dominant = morphology_counts.most_common(1)[0]
+        import plotly.express as px
+        import plotly.graph_objects as go
 
-        tile = st.columns(4)
-        tile[0].metric("Particles", len(records))
-        tile[1].metric("Mean detection conf", f"{mean_detection:.3f}")
-        tile[2].metric("Mean morphology conf", f"{mean_morphology:.3f}")
-        tile[3].metric("Dominant morphology", dominant[0])
+        source_image = st.session_state.get("source_image")
+        image_size = source_image.size if source_image else (0, 0)
+        model_label = MODEL_LABELS.get(
+            st.session_state.get("model_name"),
+            st.session_state.get("model_name", "n/a"),
+        )
+        series = series_colours()
+
+        stats = field_stats(records, image_size, CONF_THRESHOLD)
+
+        st.subheader("What this field shows")
+        for line in interpret(stats):
+            st.markdown(f"- {line}")
 
         st.caption(
-            f"Detector: {MODEL_LABELS.get(st.session_state.get('model_name'), 'n/a')}"
+            f"Detector: {model_label} · confidence floor {CONF_THRESHOLD:.2f} · "
+            f"{image_size[0]}×{image_size[1]} px"
         )
+
+        tile = st.columns(5)
+        tile[0].metric(
+            "Particles", stats["count"], help="Boxes reported above the fixed floor."
+        )
+        tile[1].metric(
+            "Median detection conf",
+            f"{stats['median_detection']:.3f}",
+            help="Median, not mean: one confident outlier should not lift the headline.",
+            delta_color="off",
+        )
+        tile[2].metric(
+            "Below 0.70 conf",
+            f"{stats['marginal_share']:.0%}",
+            help="Detections the model was least sure about.",
+            delta_color="inverse",
+        )
+        tile[3].metric(
+            "Frame covered",
+            f"{stats['coverage']:.1%}",
+            help="Summed box area over frame area.",
+            delta_color="off",
+        )
+        tile[4].metric(
+            "Overlapping pairs",
+            f"{stats['touching']:.0%}",
+            help="Particles within touching distance of a neighbour.",
+            delta_color="inverse",
+        )
+
         _legend_strip(records)
 
-        detection_col, morphology_col = st.columns(2)
-        with detection_col:
-            st.subheader("Detection class (Stage 1A)")
-            st.bar_chart(dict(sorted(detection_counts.items())), width="stretch")
-        with morphology_col:
-            st.subheader("Morphology (Stage 1B)")
-            st.bar_chart(dict(sorted(morphology_counts.items())), width="stretch")
+        # --- distributions --------------------------------------------------
+        left, right = st.columns(2)
 
-        st.subheader("Morphology share")
-        import plotly.express as px
+        with left:
+            st.markdown("**Morphology mix (Stage 1B)**")
+            st.plotly_chart(
+                _themed(
+                    px.bar(
+                        x=list(stats["morphology_counts"].values()),
+                        y=list(stats["morphology_counts"].keys()),
+                        orientation="h",
+                        labels={"x": "particles", "y": ""},
+                        color_discrete_sequence=series,
+                        text=list(stats["morphology_counts"].values()),
+                    ),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
 
+        with right:
+            st.markdown("**Detection confidence spread**")
+            st.plotly_chart(
+                _themed(
+                    go.Figure(
+                        go.Bar(
+                            x=[label for _, _, label in CONFIDENCE_BINS],
+                            y=[
+                                stats["histogram"].get(label, 0)
+                                for _, _, label in CONFIDENCE_BINS
+                            ],
+                            marker_color=series[0],
+                            hovertemplate="%{x}<br>%{y} particle(s)<extra></extra>",
+                        )
+                    ).update_layout(barmode="stack"),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
+            st.caption(
+                "A tall first bar means the count rests on marginal detections, "
+                "and would drop if the floor were raised."
+            )
+
+        left, right = st.columns(2)
+
+        with left:
+            st.markdown("**Particle size distribution**")
+            areas = sorted(float(r["bbox"][2]) * float(r["bbox"][3]) for r in records)
+            st.plotly_chart(
+                _themed(
+                    go.Figure(
+                        go.Histogram(
+                            x=areas,
+                            marker_color=series[1],
+                            nbinsx=max(4, min(14, len(areas))),
+                            hovertemplate="%{x:.0f} px²<br>%{y} particle(s)<extra></extra>",
+                        )
+                    ),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
+            st.caption(
+                f"Median {stats['area_median']:.0f} px² "
+                f"({stats['area_min']:.0f}-{stats['area_max']:.0f} px²). "
+                "Pixels only — the images carry no calibration metadata, so a "
+                "micron figure is not available."
+            )
+
+        with right:
+            st.markdown("**Where the particles sit**")
+            if image_size[0] > 0:
+                xs = [c[0] for c in stats["centroids"]]
+                ys = [c[1] for c in stats["centroids"]]
+                st.plotly_chart(
+                    _themed(
+                        go.Figure(
+                            go.Scatter(
+                                x=xs,
+                                y=ys,
+                                mode="markers",
+                                marker={
+                                    "size": 11,
+                                    "color": [
+                                        float(r["detection_confidence"])
+                                        for r in records
+                                    ],
+                                    "colorscale": "Teal",
+                                    "line": {
+                                        "width": 1,
+                                        "color": palette()["border"],
+                                    },
+                                    "colorbar": {
+                                        "title": "conf",
+                                        "thickness": 10,
+                                        "outlinewidth": 0,
+                                    },
+                                },
+                                hovertemplate="(%{x:.0f}, %{y:.0f}) px<extra></extra>",
+                            )
+                        ).update_yaxes(
+                            scaleanchor="x", scaleratio=1, autorange="reversed"
+                        ),
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                )
+                st.caption(
+                    "Particle centres in frame coordinates, marker colour = "
+                    "detection confidence. Empty regions are areas the detector "
+                    "found nothing."
+                )
+            else:
+                st.info("Image size unavailable, so positions cannot be plotted.")
+
+        # --- cross-tab ------------------------------------------------------
+        st.markdown("**Detection class × morphology**")
+        cross = Counter((r["class"], r["morphology"]) for r in records)
+        classes = sorted({key[0] for key in cross})
+        morphologies = sorted({key[1] for key in cross})
         st.plotly_chart(
-            px.pie(
-                names=list(morphology_counts.keys()),
-                values=list(morphology_counts.values()),
-                title="",
+            _themed(
+                go.Figure(
+                    go.Heatmap(
+                        z=[
+                            [cross.get((c, m), 0) for m in morphologies]
+                            for c in classes
+                        ],
+                        x=morphologies,
+                        y=classes,
+                        colorscale="Teal",
+                        text=[
+                            [str(cross.get((c, m), 0)) for m in morphologies]
+                            for c in classes
+                        ],
+                        texttemplate="%{text}",
+                        hovertemplate="%{y} / %{x}: %{z}<extra></extra>",
+                    )
+                ),
             ),
             width="stretch",
+            config={"displayModeBar": False},
         )
 
         if spectral_active and spectrum_results:
             polymer_counts = Counter(r["polymer"] for r in spectrum_results)
             st.subheader("Polymer (Stage 2B)")
-            st.bar_chart(dict(sorted(polymer_counts.items())), width="stretch")
+            st.plotly_chart(
+                _themed(
+                    px.bar(
+                        x=list(polymer_counts.keys()),
+                        y=list(polymer_counts.values()),
+                        labels={"x": "", "y": "spectra"},
+                        color_discrete_sequence=series,
+                    ),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
+
+        with st.expander("Per-particle table"):
+            st.dataframe(
+                [
+                    {
+                        "id": record["particle_id"],
+                        "class": record["class"],
+                        "detection_confidence": record["detection_confidence"],
+                        "morphology": record["morphology"],
+                        "morphology_confidence": round(
+                            float(record["morphology_confidence"]), 4
+                        ),
+                        "area_px2": round(
+                            float(record["bbox"][2]) * float(record["bbox"][3])
+                        ),
+                        "bbox (xywh)": record["bbox"],
+                    }
+                    for record in records
+                ],
+                width="stretch",
+                hide_index=True,
+            )
     else:
         with st.container(border=True):
             st.markdown("#### Nothing to summarise")
             st.caption("Run an image analysis on the Image tab to populate this page.")
         if spectral_active and spectrum_results:
-            st.subheader("Polymer (Stage 2B)")
+            # No image records, so `series` was never bound above -- fall back to
+            # the palette's own series colours for this branch.
+            import plotly.express as px
+
             polymer_counts = Counter(r["polymer"] for r in spectrum_results)
-            st.bar_chart(dict(sorted(polymer_counts.items())), width="stretch")
+            st.subheader("Polymer (Stage 2B)")
+            st.plotly_chart(
+                _themed(
+                    px.bar(
+                        x=list(polymer_counts.keys()),
+                        y=list(polymer_counts.values()),
+                        labels={"x": "", "y": "spectra"},
+                        color_discrete_sequence=series_colours(),
+                    ),
+                ),
+                width="stretch",
+            )
 
     with st.container(border=True):
         st.subheader("Reports")
