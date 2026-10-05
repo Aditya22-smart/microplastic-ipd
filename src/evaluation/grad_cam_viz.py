@@ -116,15 +116,52 @@ def overlay_cam_on_image(
         )
         / 255.0
     )
-    heatmap = (cm.jet(cam_resized)[:, :, :3] * 255).astype(np.uint8)
+    # `turbo`, not `jet`. `jet` is matplotlib's historical default and is the
+    # textbook example of a bad colormap: it is not perceptually uniform, so it
+    # invents banding and false edges that are not in the CAM, and its green
+    # midtones disappear for red-green colour blindness. `turbo` was designed as
+    # a jet replacement with near-uniform luminance and a colour-vision-safe
+    # path. Both run cool (blue) to hot (red), so the reading is unchanged.
+    heatmap = (cm.turbo(cam_resized)[:, :, :3] * 255).astype(np.uint8)
     base = np.array(image)
     blended = (alpha * heatmap + (1 - alpha) * base).astype(np.uint8)
     return Image.fromarray(blended)
 
 
+<<<<<<< HEAD
 def compute_spectral_saliency(model, spectrum, target_class=None, device=None):
     """Vanilla gradient saliency for spectral 1D-CNN (Pipeline 2B - Day 8)."""
     from src.evaluation.spectral_saliency import compute_spectral_saliency as _css
 
     return _css(model, spectrum, target_class=target_class, device=device)
 
+=======
+def grad_cam_for_crop(crop, weights_path: Path | None = None) -> np.ndarray:
+    """Run Grad-CAM on one cropped particle ROI.
+
+    Wraps the model loading and input transform so callers (notably the
+    dashboard) do not have to import torch plumbing. The ROI is re-cropped from
+    the original image by the caller, so this costs no extra detection pass.
+
+    Args:
+        crop: a PIL Image of a single particle.
+        weights_path: morphology checkpoint; defaults to
+            :data:`src.models.predict_morphology.DEFAULT_WEIGHTS`, resolved at
+            call time.
+
+    Returns:
+        A ``[H, W]`` CAM normalised to ``[0, 1]``.
+    """
+    from src.models.predict_morphology import load_morphology_model
+    from src.preprocessing.image_preprocess import get_eval_transform
+
+    model, _classes, device = load_morphology_model(weights_path)
+    transform = get_eval_transform(224)
+    tensor = transform(image=np.asarray(crop.convert("RGB")))["image"]
+    cam = GradCAM(model, default_target_layer(model))
+    try:
+        return cam.generate(tensor.unsqueeze(0).to(device))
+    finally:
+        # Always unhook, or every widget interaction leaks another forward hook.
+        cam.close()
+>>>>>>> 26c0725dfeebd6c08379d6b88f915e3ae1714843

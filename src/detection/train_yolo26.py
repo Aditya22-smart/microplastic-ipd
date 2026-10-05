@@ -1,4 +1,8 @@
-"""Train YOLO26 on the merged microplastic detection dataset."""
+"""Train YOLO26 on the merged microplastic detection dataset.
+
+The checkpoint in ``weights/`` is the nano variant (``yolo26n``), which is what
+``configs/yolo26.yaml`` trains.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
     from ultralytics import YOLO
 
     config = load_config(config_path)
-    model_name = config.get("model", "yolo26s.pt")
+    model_name = config.get("model", "yolo26n.pt")
     data = str(config["data"])
     if copy_to_local:
         import shutil
@@ -54,7 +58,7 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
         lr0=float(config.get("lr0", 0.01)),
         seed=int(config.get("seed", 42)),
         project=str(config.get("project", "results/detection")),
-        name=config.get("name", "yolo26s_microplastic"),
+        name=config.get("name", "yolo26n_microplastic"),
     )
     return results
 

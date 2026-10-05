@@ -61,9 +61,20 @@ def _load_model(weights_path: Path) -> tuple[SpectralTower, list[str], torch.dev
 
 
 def predict_polymer(
-    spectrum_array: Any, weights_path: Path = DEFAULT_WEIGHTS
+    spectrum_array: Any, weights_path: Path | None = None
 ) -> dict[str, Any]:
-    model, classes, device = _load_model(weights_path)
+    """Predict the polymer type of a preprocessed spectrum.
+
+    Args:
+        spectrum_array: array-like of shape [600] (or [N, 600]).
+        weights_path: Path to ``spectral_1dcnn_best.pth``. Defaults to
+            :data:`DEFAULT_WEIGHTS`, resolved at call time so tests can point
+            the module at a temporary checkpoint.
+    """
+    # Resolved in the body rather than as a default argument: a default binds at
+    # import time, so patching DEFAULT_WEIGHTS would silently be ignored.
+    resolved = DEFAULT_WEIGHTS if weights_path is None else Path(weights_path)
+    model, classes, device = _load_model(resolved)
     spectrum = np.asarray(spectrum_array, dtype=np.float32)
     if spectrum.ndim == 1:
         spectrum = spectrum[None, :]

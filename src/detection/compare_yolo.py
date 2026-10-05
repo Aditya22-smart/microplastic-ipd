@@ -1,4 +1,10 @@
-"""Compare YOLOv8 / YOLOv11 / YOLO26 on the merged test split."""
+"""Compare YOLOv8 / YOLO26 on the merged test split.
+
+Filenames carry no size suffix: the checkpoints in this project are the *nano*
+variants (3.0M params for v8, 2.5M for v26), so labelling them ``_s`` would
+misreport the comparison. ``MODEL_FILES`` must stay in sync with ``WEIGHTS`` in
+:mod:`src.detection.inference`.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +17,8 @@ DEFAULT_DATA = REPO_ROOT / "data" / "microplastic.yaml"
 DEFAULT_OUT = REPO_ROOT / "results" / "detection" / "yolo_comparison_table.csv"
 
 MODEL_FILES = {
-    "yolov8s": REPO_ROOT / "weights" / "yolov8s_microplastic.pt",
-    "yolo11s": REPO_ROOT / "weights" / "yolo11s_microplastic.pt",
-    "yolo26s": REPO_ROOT / "weights" / "yolo26s_microplastic.pt",
+    "yolov8n": REPO_ROOT / "weights" / "yolov8_microplastic.pt",
+    "yolo26n": REPO_ROOT / "weights" / "yolo26_microplastic.pt",
 }
 
 

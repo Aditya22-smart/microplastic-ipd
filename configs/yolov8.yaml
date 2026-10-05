@@ -1,12 +1,16 @@
-# YOLOv11 detection hyperparameters — primary model (Naman).
+# YOLOv8 detection hyperparameters — H1 BASELINE arm (Naman).
 # Source: IPD_Project_Guide.md Days 4-5 + AGENT.md Section 4.1.
-# Same base hyperparameters as YOLOv8 baseline and YOLO26 comparison so H1 is fair.
+# Hyperparameters are byte-identical to configs/yolo26.yaml so H1 is fair:
+# only the model differs.
+# NOTE: the guide spells this arm 'YOLOv11'. YOLOv11 was dropped from the
+# project, so this config drives the YOLOv8 baseline instead. See the dated
+# amendment at the end of IPD_Project_Guide.md.
 
 task: detect
 mode: train
 
 # Model
-model: yolo11s.pt            # yolo11s primary; yolo11m for final reported results
+model: yolov8n.pt            # nano variant — matches weights/yolov8_microplastic.pt
 
 # Data
 data: data/microplastic.yaml
@@ -43,7 +47,7 @@ copy_paste: 0.0
 seed: 42                     # SEED=42 for all runs — reproducibility required
 workers: 8
 project: results/detection
-name: yolo11s_microplastic
+name: yolov8n_microplastic
 exist_ok: true
 plots: true
 val: true

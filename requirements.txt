@@ -19,7 +19,9 @@ pandas>=2.0.0
 pillow>=10.0                # Image I/O (used by dataset + predict_morphology)
 matplotlib>=3.7.0
 seaborn>=0.12.0
-grad-cam>=1.4.8             # Grad-CAM visualization
+# Grad-CAM is implemented in-repo (src/evaluation/grad_cam_viz.py) using torch
+# hooks. The PyPI `grad-cam` package was removed: version 1.5.7 ships a
+# `pytorch_grad_cam` module that raises NameError on import, and nothing used it.
 wandb>=0.15.0               # Experiment tracking
 streamlit>=1.28.0           # Web dashboard
 plotly>=5.15.0              # Interactive plots

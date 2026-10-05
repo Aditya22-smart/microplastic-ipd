@@ -1,14 +1,11 @@
 # Automated Microplastic Detection & Classification Using Deep Learning
 
-IPD Semester VI project — Dwarkadas J. Sanghvi College of Engineering (CSE Data Science)
-**Guide:** Dr. Namita Pulgam · **Team:** Naman Jain, Kunsh Kaul, Aditya Lakhotia, Rohan Nevrekar
-
 ## 🔬 Project Overview
 
 An automated system that detects, localizes, and classifies microplastic particles. The system is built from **two independent deep-learning pipelines** that share one dashboard — a design that works because no open dataset pairs an image and a spectrum for the same particle:
 
 1. **Pipeline 1 — Visual (image in):**
-   - **YOLOv11 detection** localizes microplastic particles and crops each one.
+   - **YOLO detection (YOLO26n primary, YOLOv8n baseline)** localizes microplastic particles and crops each one.
    - **MobileNetV3-Small** classifies each crop's morphology → *sphere / fragment / fiber / film / foam*.
 2. **Pipeline 2 — Spectral (spectrum in):**
    - FTIR/Raman preprocessing (Savitzky-Golay smoothing → water-vapour band zeroing → SNV normalization).
@@ -18,13 +15,13 @@ An automated system that detects, localizes, and classifies microplastic particl
 ### Three Research Hypotheses
 | # | Hypothesis | Test |
 |---|---|---|
-| H1 | YOLOv11 mAP@0.5 > YOLOv8 on microplastic detection | paired t-test, 5 seeds |
+| H1 | YOLO26 mAP@0.5 > YOLOv8 baseline on microplastic detection | paired t-test, 5 seeds |
 | H2 | MobileNetV3 fine-tuned > from-scratch on morphology | McNemar's test |
 | H3 | 1D-CNN generalizes to weathered spectra (FLOPP-e) better than SVM | Wilcoxon signed-rank |
 
 ## 🛠️ Tools & Technologies
-- **Deep Learning:** PyTorch, Ultralytics (YOLOv8/v11/v26)
-- **Vision:** Albumentations, timm (MobileNetV3), pytorch-grad-cam
+- **Deep Learning:** PyTorch, Ultralytics (YOLOv8, YOLO26)
+- **Vision:** Albumentations, timm (MobileNetV3); Grad-CAM implemented in-repo
 - **Spectroscopy:** scipy, spectral, scikit-learn (SVM baseline)
 - **Stats:** scipy.stats, statsmodels (McNemar)
 - **Tracking:** Weights & Biases (wandb)
@@ -45,7 +42,7 @@ microplastic-ipd/
 ├── notebooks/                # EDA + Colab training notebooks (01–05)
 ├── results/                  # Tables, confusion matrices, Grad-CAMs, hypothesis JSONs
 ├── src/
-│   ├── detection/            # Naman: YOLO training, compare_yolo, inference.detect_and_crop
+│   ├── detection/            # YOLO training, compare_yolo, inference.detect_and_crop
 │   ├── preprocessing/        # download_data, merge_datasets, image/spectral preprocess
 │   ├── models/               # vision_tower, spectral_tower, predict_morphology, predict_polymer, full_pipeline
 │   ├── training/             # train_morphology, train_spectral, metrics
@@ -90,6 +87,40 @@ uv run streamlit run src/output/dashboard.py
 > `uv sync` there — Colab supplies its own CUDA build of PyTorch, and the local
 > lock file pins the CPU wheel.
 
+### Verify your environment
+
+Run this after cloning, and again if anything behaves strangely. It catches the
+three failure modes that actually bite: a stale lock file, a missing package, and
+a `requirements.txt` that has drifted from `pyproject.toml`.
+
+```bash
+uv sync --frozen     # installs exactly what uv.lock pins; fails if it is stale
+uv lock --check      # confirms pyproject.toml and uv.lock agree
+uv pip check         # confirms no installed package conflicts with another
+uv run pytest tests/test_dependencies.py -v   # every declared package importable
+```
+
+`tests/test_dependencies.py` is the repeatable version of this: it asserts the
+two dependency files list the same packages at the same version floors, that
+nothing is pinned with `==` (which would fight Colab's CUDA wheels), and that
+every declared distribution actually imports.
+
+### Checkpoints
+
+The trained detector and morphology checkpoints are committed under `weights/`
+(~19 MB total), so a fresh clone can run inference and the dashboard immediately:
+
+| File | Model |
+|---|---|
+| `weights/yolo26_microplastic.pt` | YOLO26n — primary detector |
+| `weights/yolov8_microplastic.pt` | YOLOv8n — H1 baseline |
+| `weights/mobilenetv3_morphology_best.pth` | MobileNetV3 — morphology |
+
+The filenames carry no size suffix on purpose: these are the **nano** variants,
+and labelling them `_s` would misreport the H1 comparison. `spectral_1dcnn_best.pth`
+is not committed — until the spectral model is trained, that branch stays behind
+the `MP_SPECTRAL_ENABLED` flag.
+
 ### 1. Download the morphology dataset (Moore Institute + PEESEgroup)
 ```bash
 uv run python -m src.preprocessing.download_data all --workers 12
@@ -116,11 +147,44 @@ uv run python -m src.training.train_spectral --seed 42 --svm-baseline --wandb
 uv run streamlit run src/output/dashboard.py
 ```
 
+`dashboard.py` puts the repo root on `sys.path` itself, so this works from the
+repo root with no environment variables. (Streamlit adds only the *script's own
+folder* to the import path, never the working directory, so without that
+bootstrap the command fails with `No module named 'src'`.
+`tests/test_dashboard_launch.py` guards it by booting the app in a subprocess
+with the repo root stripped from `sys.path`.)
+
+By default the dashboard runs in **visual-only mode**: the Image and Summary
+tabs, no spectral upload. The spectral branch (Stage 2A/2B) is behind the
+`MP_SPECTRAL_ENABLED` feature flag because it needs a trained 1D-CNN
+checkpoint. Enable it either with the sidebar toggle or:
+
+```bash
+MP_SPECTRAL_ENABLED=1 uv run streamlit run src/output/dashboard.py
+```
+
+With it off, `analyze_spectrum()` raises `FeatureDisabledError`, and the PDF
+report omits the polymer column, so an image-only run never implies polymer
+results that were not computed.
+
+**What you should see.** The Image tab shows the input and the annotated output
+side by side — at half width each, which is roughly the native resolution of a
+typical micrograph, so the images stay sharp instead of being upscaled. Above
+them sit four metric chips (particle count, mean confidences, dominant
+morphology); below are a colour key for the detection boxes, the per-particle
+table, and a Grad-CAM explainability panel that re-crops the stored bounding
+box, so it costs no extra inference.
+
+Appearance is fixed by `.streamlit/config.toml` (committed), so the dashboard
+looks the same on every machine. The accent colour is teal by design: the
+detection boxes are red, green and blue, and a UI accent in the same hue family
+would compete with the annotation you are meant to read first.
+
 ## 🤝 Contributor Guidelines
 
 We use a strict branching and pull-request workflow. **Never commit directly to `main`.**
 
-1. **Clone & branch** — teams use `naman/detection`, `kunsh/spectral`, `rohan/vision`, `aditya/integration`.
+1. **Clone & branch** — one branch per module, e.g. `feat/detection`, `feat/spectral`, `feat/vision`, `feat/integration`.
 2. **Code & test** — run the local quality gates before pushing:
    ```bash
    uv run black --check src tests
