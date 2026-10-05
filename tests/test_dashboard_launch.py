@@ -104,7 +104,19 @@ def test_theme_file_exists_and_is_valid_toml() -> None:
     )
     config = tomllib.loads(THEME.read_text("utf-8"))
     assert "theme" in config
-    for key in ("primaryColor", "backgroundColor", "textColor"):
+    # Dark only, declared in one flat [theme] table. A per-mode override left
+    # behind would let Streamlit serve a palette the injected stylesheet knows
+    # nothing about, which shows up as a light page behind dark chrome.
+    assert config["theme"]["base"] == "dark"
+    for mode in ("light", "dark"):
+        assert mode not in config["theme"], f"theme.{mode} override left behind"
+    for key in (
+        "primaryColor",
+        "backgroundColor",
+        "secondaryBackgroundColor",
+        "textColor",
+        "borderColor",
+    ):
         value = config["theme"][key]
         assert value.startswith("#") and len(value) == 7, f"{key}={value!r}"
 

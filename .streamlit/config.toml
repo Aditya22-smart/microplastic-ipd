@@ -1,16 +1,26 @@
 # Streamlit theme. Committed so the dashboard looks the same on every machine
 # instead of inheriting whatever the local install defaults to.
 #
+# Dark only. A light/dark toggle was offered and removed: the annotated image is
+# the thing being read, and a bright page around it washes out the dark-field
+# micrographs the detector is tuned for. One palette also means there is no way
+# for the page, the charts and the PDF to disagree about what the dashboard
+# looks like.
+#
 # primaryColor is teal on purpose: the detection boxes are red / green / blue, so
 # a UI accent in the same hue family would compete with the annotation the viewer
-# is meant to read first.
+# is meant to read first. It is the one colour brightened against Streamlit's
+# dark defaults, so it stays legible without shifting into the boxes' hue range.
 
 [theme]
-primaryColor = "#0D9488"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F1F5F9"
-textColor = "#0F172A"
+base = "dark"
+primaryColor = "#2DD4BF"
+backgroundColor = "#0B1220"
+secondaryBackgroundColor = "#111C2E"
+textColor = "#E2E8F0"
+borderColor = "#1E293B"
 font = "sans serif"
+baseRadius = "0.5rem"
 
 [server]
 # WSL does not support inotify reliably; polling avoids a crash-loop on save.

@@ -53,8 +53,14 @@ def color_for(class_name: str) -> tuple[int, int, int]:
 
 
 def to_hex(color: tuple[int, int, int]) -> str:
-    """Convert an RGB triple to a ``#RRGGBB`` string for HTML legends."""
-    return "#{:02X}{:02X}{:02X}".format(*color)
+    """Convert an RGB triple to a ``#RRGGBB`` string for HTML legends.
+
+    Clamped rather than formatted blind: this value is interpolated into a
+    ``<span style="color:...">`` that the dashboard renders as raw HTML, so a
+    malformed triple must never be able to inject markup through it.
+    """
+    r, g, b = (max(0, min(255, int(channel))) for channel in color)
+    return f"#{r:02X}{g:02X}{b:02X}"
 
 
 def class_legend(

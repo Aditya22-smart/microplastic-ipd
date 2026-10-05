@@ -20,6 +20,7 @@ from streamlit.testing.v1 import AppTest
 
 from src.config import SPECTRAL_ENABLED_ENV
 from src.models.full_pipeline import RECORD_KEYS
+from src.output import theme
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = REPO_ROOT / "src" / "output" / "dashboard.py"
@@ -240,22 +241,34 @@ def test_colour_legend_is_rendered_next_to_the_annotation(
     at = _upload_speck(_run(), speck_image)
     records = at.session_state["records"]
 
-    legends = [str(m.value) for m in at.markdown if "span" in str(m.value)]
-    assert legends, "no colour legend rendered"
+    legend_els = [m for m in at.markdown if "span" in str(m.value)]
+    assert legend_els, "no colour legend rendered"
+    legends = [str(m.value) for m in legend_els]
+
+    # The string above is identical whether or not Streamlit is allowed to
+    # render it, so asserting on the source cannot catch the real failure --
+    # which is the user seeing literal
+    # `<span style="color:#286EE6;font-size:1.15em">` on the page because
+    # st.markdown escapes HTML by default. Check the flag that decides it.
+    assert legend_els[0].proto.allow_html, (
+        "legend HTML will be escaped and shown as markup soup; "
+        "st.markdown needs unsafe_allow_html=True"
+    )
 
     from src.output.annotate import class_legend, to_hex
 
+    legend = legends[0]
     expected = class_legend(records)
     assert expected, "records carry no class to build a legend from"
     for name, colour in expected:
-        assert to_hex(colour) in legends[0], f"{name} colour missing from the legend"
-        assert name in legends[0], f"{name} missing from the legend"
+        assert to_hex(colour) in legend, f"{name} colour missing from the legend"
+        assert name in legend, f"{name} missing from the legend"
 
     # The per-class counts printed in the legend must sum to the particles
     # actually reported, or the key is quietly lying about the result.
     counts = [
         int(chunk.split("(")[1].rstrip(")"))
-        for chunk in legends[0].replace("&nbsp;", " ").split()
+        for chunk in legend.replace("&nbsp;", " ").split()
         if "(" in chunk and chunk.endswith(")")
     ]
     assert len(counts) == len(expected)
@@ -272,6 +285,75 @@ def test_summary_tiles_and_downloads_appear_after_an_upload(
     assert {"Particles", "Mean detection conf", "Dominant morphology"} <= labels
     buttons = {button.label for button in at.get("download_button")}
     assert {"Download JSON", "Download PDF"} <= buttons
+
+
+# --- palette ----------------------------------------------------------------
+
+
+def test_there_is_no_appearance_toggle() -> None:
+    """The dashboard is dark-only; a theme control would be a dead end.
+
+    Streamlit exposes no Python API to set the active theme, so a sidebar switch
+    could only repaint part of the page. Asserting the control is *absent* keeps a
+    half-removed toggle from creeping back in.
+    """
+    assert not _run().get(
+        "segmented_control"
+    ), "an appearance control reappeared; the dashboard is dark-only by design"
+
+
+def test_a_stylesheet_is_emitted_on_every_run() -> None:
+    """``st.html`` with a <style> block arrives as a SpecialBlock.
+
+    Asserted as a count rather than by content: AppTest computes no CSS, and the
+    SpecialBlock carries no readable value, so the contents are verified in
+    tests/test_dashboard_theme.py against the pure function that produced them.
+    """
+    at = _run()
+    blocks = [e for e in at.main if type(e).__name__ == "SpecialBlock"]
+    assert blocks, "no stylesheet emitted; the page would use Streamlit's default"
+
+
+def test_every_summary_chart_is_themed(
+    weights_available: bool, speck_image: bytes
+) -> None:
+    """No chart may fall back to Streamlit's default colours.
+
+    ``st.plotly_chart`` takes no ``layout=`` argument, so a chart that forgets the
+    ``_themed`` helper keeps white text and a white plot background -- invisible
+    details of dark mode that only a rendered page would show. Checked on the
+    serialized spec, which is what the browser receives.
+    """
+    if not weights_available:
+        pytest.skip("detection/morphology checkpoints not present")
+    at = _upload_speck(_run(), speck_image)
+    charts = at.get("plotly_chart")
+    assert charts, "no charts rendered"
+
+    for chart in charts:
+        layout = _chart_layout(chart)
+        assert layout, "a chart arrived with no layout"
+        assert (
+            layout["font"]["color"] == theme.palette()["text"]
+        ), f"chart font is {layout['font']['color']}, not the palette text colour"
+        # Transparent, so the figure inherits the dark page rather than painting
+        # a white block over it.
+        assert layout["paper_bgcolor"] == "rgba(0,0,0,0)"
+        assert layout["plot_bgcolor"] == "rgba(0,0,0,0)"
+
+
+def _chart_layout(chart) -> dict:
+    """The ``layout`` sub-dict of a chart's serialized spec."""
+    import json
+
+    spec = getattr(chart, "spec", None)
+    if not spec:
+        return {}
+    try:
+        parsed = json.loads(spec)
+    except (TypeError, ValueError):
+        return {}
+    return parsed.get("layout", {})
 
 
 # --- failure paths -----------------------------------------------------------
@@ -318,6 +400,43 @@ def test_spectral_upload_without_checkpoint_reports_cleanly() -> None:
     )
     assert not at.exception
     assert at.error, "expected an error about the missing spectral checkpoint"
+
+
+@pytest.mark.parametrize(
+    ("colour", "expected"),
+    [
+        ((220, 60, 60), "#DC3C3C"),
+        ((0, 0, 0), "#000000"),
+        ((255, 255, 255), "#FFFFFF"),
+    ],
+)
+def test_to_hex_emits_uppercase_six_digit_hex(
+    colour: tuple[int, int, int], expected: str
+) -> None:
+    """The legend colour is interpolated into a raw-HTML ``style`` attribute.
+
+    So the exact shape of the string matters twice over: a malformed value would
+    break the styling, and anything but hex could carry markup into the page.
+    """
+    from src.output.annotate import to_hex
+
+    assert to_hex(colour) == expected
+
+
+@pytest.mark.parametrize("bad", [(-1, 0, 0), (0, 300, 0), (0, 0, 999)])
+def test_to_hex_clamps_out_of_range_channels(bad: tuple[int, int, int]) -> None:
+    """Out-of-range channels clamp instead of widening the string.
+
+    ``"#{:02X}"`` happily renders 300 as ``12C``, silently shifting the digits
+    and corrupting the colour -- and a longer value would let non-hex text slip
+    through into the style attribute.
+    """
+    from src.output.annotate import to_hex
+
+    value = to_hex(bad)
+    assert len(value) == 7, f"expected #RRGGBB, got {value!r}"
+    assert value.startswith("#")
+    int(value[1:], 16)  # must parse as hex, or it is not a colour
 
 
 def _blank_png() -> bytes:
