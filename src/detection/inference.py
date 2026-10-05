@@ -11,6 +11,7 @@ detect_and_crop_to_json.
 from __future__ import annotations
 
 import uuid
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -18,13 +19,18 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEIGHTS = {
-    "yolov11": REPO_ROOT / "weights" / "yolo11s_microplastic.pt",
     "yolov8": REPO_ROOT / "weights" / "yolov8_microplastic.pt",
-    "yolov26": REPO_ROOT / "weights" / "yolov26_microplastic.pt",
+    "yolo26": REPO_ROOT / "weights" / "yolo26_microplastic.pt",
 }
-DEFAULT_MODEL = "yolov11"
+# YOLOv11 was dropped from the comparison; YOLO26 is the primary detector.
+# Keep in sync with MODEL_FILES in src.detection.compare_yolo.
+DEFAULT_MODEL = "yolo26"
 CROP_OUTPUT_DIR = REPO_ROOT / "results" / "detection" / "crops_tmp"
-CONF_THRESHOLD = 0.25
+#: Confidence floor applied to every detection. Fixed rather than exposed as a
+#: dashboard widget so the UI, the PDF report and the JSON export all report the
+#: same operating point. Chosen empirically against the score distribution of the
+#: committed checkpoints -- see the note in tests/test_inference.py.
+CONF_THRESHOLD = 0.5
 
 LEGACY_CLASS_MAP = {
     "beams": "bead",
@@ -46,7 +52,14 @@ def _load_model(model_name: str = DEFAULT_MODEL):
         available = [name for name, path in WEIGHTS.items() if path.is_file()]
         if not available:
             raise FileNotFoundError("no detection weights found under weights/")
-        model_name = available[0]
+        fallback = available[0]
+        warnings.warn(
+            f"model {model_name!r} has no weights at {weights_path}; "
+            f"falling back to {fallback!r}. Results are NOT from {model_name!r}.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        model_name = fallback
         weights_path = WEIGHTS[model_name]
     model = YOLO(str(weights_path))
     _model_cache[model_name] = model

@@ -1,4 +1,8 @@
-"""Train YOLOv11 on the merged microplastic detection dataset."""
+"""Train YOLOv8 on the merged microplastic detection dataset.
+
+YOLOv8 is the H1 baseline arm. The checkpoint in ``weights/`` is the nano
+variant (``yolov8n``), which is what ``configs/yolov8.yaml`` trains.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = REPO_ROOT / "configs" / "yolo11.yaml"
+DEFAULT_CONFIG = REPO_ROOT / "configs" / "yolov8.yaml"
 
 
 def load_config(path: Path) -> dict:
@@ -20,7 +24,7 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
     from ultralytics import YOLO
 
     config = load_config(config_path)
-    model_name = config.get("model", "yolo11s.pt")
+    model_name = config.get("model", "yolov8n.pt")
     data = str(config["data"])
     if copy_to_local:
         import shutil
@@ -34,7 +38,7 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
         )
         if not dataset_root.is_absolute():
             dataset_root = (yaml_path.parent / dataset_root).resolve()
-        tmp = Path(tempfile.mkdtemp(prefix="yolo11_data_"))
+        tmp = Path(tempfile.mkdtemp(prefix="yolov8_data_"))
         shutil.copytree(dataset_root, tmp / dataset_root.name, dirs_exist_ok=True)
         new_yaml = tmp / "microplastic.yaml"
         new_yaml.write_text(
@@ -54,13 +58,13 @@ def train(config_path: Path = DEFAULT_CONFIG, *, copy_to_local: bool = False):
         lr0=float(config.get("lr0", 0.01)),
         seed=int(config.get("seed", 42)),
         project=str(config.get("project", "results/detection")),
-        name=config.get("name", "yolo11s_microplastic"),
+        name=config.get("name", "yolov8n_microplastic"),
     )
     return results
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="train_yolo11")
+    parser = argparse.ArgumentParser(prog="train_yolov8")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--copy-to-local", action="store_true")
     args = parser.parse_args()

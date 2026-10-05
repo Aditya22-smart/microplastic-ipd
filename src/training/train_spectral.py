@@ -57,16 +57,30 @@ def build_model(config: dict) -> torch.nn.Module:
 def _load_arrays(
     data_dir: Path,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load the train/validation arrays written by ``spectral_preprocess``.
+
+    A dedicated validation split is **required**. The earlier version fell back
+    to a random split over the pixels of ``train_spectra.npy``. Because adjacent
+    pixels in a hyperspectral field are near-identical, a pixel-level split puts
+    almost-duplicate neighbours on both sides: validation accuracy lands above
+    95% while measuring nothing. IPD_Project_Guide.md line 421 flags this
+    explicitly. Refuse to train rather than report a fabricated number.
+    """
     train_x = np.load(data_dir / "train_spectra.npy")
     train_y = np.load(data_dir / "train_labels.npy")
     val_path_x = data_dir / "val_spectra.npy"
     val_path_y = data_dir / "val_labels.npy"
     if val_path_x.is_file() and val_path_y.is_file():
         return train_x, train_y, np.load(val_path_x), np.load(val_path_y)
-    idx = np.random.default_rng(42).permutation(len(train_x))
-    split = int(0.85 * len(idx))
-    tr, va = idx[:split], idx[split:]
-    return train_x[tr], train_y[tr], train_x[va], train_y[va]
+    missing = [path.name for path in (val_path_x, val_path_y) if not path.is_file()]
+    raise FileNotFoundError(
+        f"missing validation arrays in {data_dir}: {', '.join(missing)}. "
+        "Refusing to fall back to a random pixel split: neighbouring pixels in a "
+        "hyperspectral field are near-identical, so that inflates validation "
+        "accuracy above ~95% without measuring generalisation. Build a "
+        "sample-level split with `sample_level_split()` (grouping by source "
+        "sample, not by pixel) and save val_spectra.npy / val_labels.npy first."
+    )
 
 
 def train_loop(

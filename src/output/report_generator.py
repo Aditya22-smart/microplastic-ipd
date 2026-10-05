@@ -7,12 +7,20 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from src.config import spectral_enabled
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def build_report_pdf(
     records: list[dict], title: str = "Microplastic Analysis Report"
 ) -> bytes:
+    """Render ``records`` to PDF bytes.
+
+    The polymer column and distribution are omitted when the spectral branch is
+    switched off, so an image-only run produces a report that does not imply
+    polymer results that were never computed.
+    """
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import (
@@ -21,6 +29,7 @@ def build_report_pdf(
         Spacer,
     )
 
+    include_polymer = spectral_enabled()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -32,6 +41,14 @@ def build_report_pdf(
             styles["Normal"],
         ),
         Paragraph(f"Total particles: {len(records)}", styles["Normal"]),
+        Paragraph(
+            (
+                "Pipeline mode: visual only (spectral branch disabled)"
+                if not include_polymer
+                else "Pipeline mode: visual + spectral"
+            ),
+            styles["Normal"],
+        ),
         Spacer(1, 12),
     ]
 
@@ -49,7 +66,7 @@ def build_report_pdf(
         polymer_counts = Counter(
             record.get("polymer") for record in records if record.get("polymer")
         )
-        if polymer_counts:
+        if include_polymer and polymer_counts:
             story.append(Paragraph("Polymer distribution", styles["Heading2"]))
             table_data = [["polymer", "count"]] + [
                 [k, str(v)] for k, v in sorted(polymer_counts.items())
@@ -58,18 +75,21 @@ def build_report_pdf(
             story.append(Spacer(1, 12))
 
         story.append(Paragraph("Per-particle detail", styles["Heading2"]))
-        detail = [["id", "class", "det_conf", "morphology", "morph_conf", "polymer"]]
+        header = ["id", "class", "det_conf", "morphology", "morph_conf"]
+        if include_polymer:
+            header.append("polymer")
+        detail = [header]
         for record in records:
-            detail.append(
-                [
-                    str(record.get("particle_id", "")),
-                    str(record.get("class", "")),
-                    f"{record.get('detection_confidence') or 0:.2f}",
-                    str(record.get("morphology", "")),
-                    f"{record.get('morphology_confidence') or 0:.2f}",
-                    str(record.get("polymer", "")),
-                ]
-            )
+            row = [
+                str(record.get("particle_id", "")),
+                str(record.get("class", "")),
+                f"{record.get('detection_confidence') or 0:.2f}",
+                str(record.get("morphology", "")),
+                f"{record.get('morphology_confidence') or 0:.2f}",
+            ]
+            if include_polymer:
+                row.append(str(record.get("polymer", "")))
+            detail.append(row)
         story.append(_make_table(detail))
 
     doc.build(story)

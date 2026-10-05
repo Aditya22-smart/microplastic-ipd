@@ -1,4 +1,4 @@
-# AGENT.md — Automated Microplastic Detection & Classification Using Deep Learning
+  # AGENT.md — Automated Microplastic Detection & Classification Using Deep Learning
 > **Project:** IPD Semester VI — Dwarkadas J. Sanghvi College of Engineering  
 > **Department:** Computer Science & Engineering (Data Science)  
 > **Guide:** Dr. Namita Pulgam  
@@ -84,7 +84,7 @@ microplastic-ipd/
 │
 ├── src/
 │   ├── detection/                  ← NAMAN's lane
-│   │   ├── train_yolo11.py         ← YOLOv11 training script
+│   │   ├── train_yolov8.py         ← YOLOv8 training script (H1 baseline)
 │   │   ├── train_yolo26.py         ← YOLO26 training script
 │   │   ├── compare_yolo.py         ← v8 vs v11 vs v26 comparison table
 │   │   └── inference.py            ← detect_and_crop() → cropped ROIs + JSON
@@ -124,14 +124,13 @@ microplastic-ipd/
 │   └── 05_results_analysis.ipynb   ← Hypothesis tests + final plots
 │
 ├── configs/
-│   ├── yolo11.yaml                 ← YOLOv11 hyperparameters
+│   ├── yolov8.yaml                 ← YOLOv8 hyperparameters (H1 baseline)
 │   ├── yolo26.yaml                 ← YOLO26 hyperparameters
 │   └── training_config.yaml        ← Shared classification hyperparameters
 │
 ├── weights/                        ← Saved model checkpoints (gitignored)
-│   ├── yolov8s_microplastic.pt     ← Naman (baseline)
-│   ├── yolo11s_microplastic.pt     ← Naman (primary)
-│   ├── yolo26s_microplastic.pt     ← Naman (comparison)
+│   ├── yolov8_microplastic.pt      ← Naman (H1 baseline, yolov8n)
+│   ├── yolo26_microplastic.pt      ← Naman (H1 primary, yolo26n)
 │   ├── mobilenetv3_morphology_best.pth  ← Rohan
 │   └── spectral_1dcnn_best.pth     ← Kunsh
 │
@@ -198,7 +197,7 @@ Polymer classes used by the spectral tower — **always uppercase**:
 - **Baseline:** YOLOv8s (required for H1).
 - **Comparison:** YOLO26s (NMS-free, STAL label assignment).
 - **Input:** raw microscope image → resize 640×640; **Output:** bbox `[x, y, w, h]` + confidence + class per particle.
-- **Hyperparameters:** `configs/yolo11.yaml` and `configs/yolo26.yaml` — `epochs=100, batch=16, imgsz=640, optimizer=AdamW, lr0=0.01, seed=42`. Same hyperparameters for v8 (baseline) so H1 is fair.
+- **Hyperparameters:** `configs/yolov8.yaml` and `configs/yolo26.yaml` — `epochs=100, batch=16, imgsz=640, optimizer=AdamW, lr0=0.01, seed=42`. The two configs are identical apart from `model`, so H1 is fair.
 
 #### Metrics to report
 mAP@0.5 (primary), mAP@0.5:0.95, Precision, Recall, F1 per class, inference time (ms/image).
@@ -329,9 +328,9 @@ from scipy.stats import ttest_rel, wilcoxon
 from statsmodels.stats.contingency_tables import mcnemar
 import numpy as np
 
-def h1_paired_ttest(yolo11_maps, yolov8_maps):
-    stat, p = ttest_rel(yolo11_maps, yolov8_maps, alternative="greater")
-    d = (np.mean(yolo11_maps) - np.mean(yolov8_maps)) / np.std(yolo11_maps - yolov8_maps)
+def h1_paired_ttest(yolo26_maps, yolov8_maps):
+    stat, p = ttest_rel(yolo26_maps, yolov8_maps, alternative="greater")
+    d = (np.mean(yolo26_maps) - np.mean(yolov8_maps)) / np.std(yolo26_maps - yolov8_maps)
     return {"statistic": stat, "p_value": p, "cohens_d": float(d)}
 
 def h2_mcnemar(y_true, pred_finetuned, pred_scratch):
@@ -418,11 +417,11 @@ wandb.log({"confusion": wandb.plot.confusion_matrix(y_true=..., preds=..., class
 
 `requirements.txt` is the single source of truth: torch, torchvision, ultralytics, timm,
 albumentations, roboflow, spectral, scipy, scikit-learn, numpy, pandas, matplotlib, seaborn,
-grad-cam, wandb, streamlit, plotly, reportlab, statsmodels.
+wandb, streamlit, plotly, reportlab, statsmodels.  # Grad-CAM is in-repo
 
 ### Colab setup cell
 ```python
-!pip install ultralytics timm albumentations roboflow spectral grad-cam wandb streamlit plotly reportlab statsmodels -q
+!pip install ultralytics timm albumentations roboflow spectral wandb streamlit plotly reportlab statsmodels -q
 from google.colab import drive
 drive.mount('/content/drive')
 ```
@@ -462,9 +461,8 @@ day, scaffold it to the contract and flag it; do not silently reimplement.
 
 ```
 weights/
-  yolov8s_microplastic.pt            yolov8s baseline
-  yolo11s_microplastic.pt            yolo11s primary
-  yolo26s_microplastic.pt            yolo26s comparison
+  yolov8_microplastic.pt             yolov8n baseline
+  yolo26_microplastic.pt             yolo26n primary
   mobilenetv3_morphology_best.pth    morphology classifier
   spectral_1dcnn_best.pth            polymer classifier
 

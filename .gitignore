@@ -16,7 +16,6 @@ __pycache__/
 # Datasets & Checkpoints
 data/raw/
 data/processed/
-weights/
 *.zip
 *.tar.gz
 *.tar

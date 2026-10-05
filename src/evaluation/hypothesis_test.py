@@ -12,11 +12,17 @@ from statsmodels.stats.contingency_tables import mcnemar
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results" / "hypothesis"
 
 
-def h1_paired_ttest(yolo11_maps, yolov8_maps) -> dict:
-    if len(yolo11_maps) != len(yolov8_maps) or len(yolo11_maps) < 2:
+def h1_paired_ttest(yolo26_maps, yolov8_maps) -> dict:
+    """H1: YOLO26 mAP50 exceeds the YOLOv8 baseline, paired across seeds.
+
+    ``alternative="greater"`` makes this one-sided — the hypothesis claims
+    YOLO26 is better, so a significant result in the *other* direction does
+    not count as support.
+    """
+    if len(yolo26_maps) != len(yolov8_maps) or len(yolo26_maps) < 2:
         raise ValueError("H1 needs paired mAP scores from at least 2 seeds.")
-    stat, p = ttest_rel(yolo11_maps, yolov8_maps, alternative="greater")
-    diff = np.asarray(yolo11_maps) - np.asarray(yolov8_maps)
+    stat, p = ttest_rel(yolo26_maps, yolov8_maps, alternative="greater")
+    diff = np.asarray(yolo26_maps) - np.asarray(yolov8_maps)
     d = float(diff.mean() / diff.std()) if diff.std() > 0 else 0.0
     return {
         "test": "paired t-test",
