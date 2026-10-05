@@ -398,6 +398,77 @@ with tab_summary:
 
         st.subheader("Morphology share")
         import plotly.express as px
+        import plotly.graph_objects as go
+
+        source_image = st.session_state.get("source_image")
+        image_size = source_image.size if source_image else (0, 0)
+        model_label = MODEL_LABELS.get(
+            st.session_state.get("model_name"),
+            st.session_state.get("model_name", "n/a"),
+        )
+        series = series_colours()
+
+        stats = field_stats(records, image_size, CONF_THRESHOLD)
+
+        st.subheader("What this field shows")
+        for line in interpret(stats):
+            st.markdown(f"- {line}")
+
+        st.caption(
+            f"Detector: {model_label} · confidence floor {CONF_THRESHOLD:.2f} · "
+            f"{image_size[0]}×{image_size[1]} px"
+        )
+
+        tile = st.columns(5)
+        tile[0].metric(
+            "Particles", stats["count"], help="Boxes reported above the fixed floor."
+        )
+        tile[1].metric(
+            "Median detection conf",
+            f"{stats['median_detection']:.3f}",
+            help="Median, not mean: one confident outlier should not lift the headline.",
+            delta_color="off",
+        )
+        tile[2].metric(
+            "Below 0.70 conf",
+            f"{stats['marginal_share']:.0%}",
+            help="Detections the model was least sure about.",
+            delta_color="inverse",
+        )
+        tile[3].metric(
+            "Frame covered",
+            f"{stats['coverage']:.1%}",
+            help="Summed box area over frame area.",
+            delta_color="off",
+        )
+        tile[4].metric(
+            "Overlapping pairs",
+            f"{stats['touching']:.0%}",
+            help="Particles within touching distance of a neighbour.",
+            delta_color="inverse",
+        )
+
+        _legend_strip(records)
+
+        # --- distributions --------------------------------------------------
+        left, right = st.columns(2)
+
+        with left:
+            st.markdown("**Morphology mix (Stage 1B)**")
+            st.plotly_chart(
+                _themed(
+                    px.bar(
+                        x=list(stats["morphology_counts"].values()),
+                        y=list(stats["morphology_counts"].keys()),
+                        orientation="h",
+                        labels={"x": "particles", "y": ""},
+                        color_discrete_sequence=series,
+                        text=list(stats["morphology_counts"].values()),
+                    ),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
 
         st.plotly_chart(
             px.pie(
