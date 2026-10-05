@@ -18,14 +18,9 @@ import torch
 from src.models.spectral_tower import SpectralTower
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_WEIGHTS = (
-    REPO_ROOT / "weights" / "spectral_1dcnn_dedup_best.pth"
-    if (REPO_ROOT / "weights" / "spectral_1dcnn_dedup_best.pth").is_file()
-    else REPO_ROOT / "weights" / "spectral_1dcnn_best.pth"
-)
+DEFAULT_WEIGHTS = REPO_ROOT / "weights" / "spectral_1dcnn_best.pth"
 
-POLYMER_CLASSES: tuple[str, ...] = ("HDPE", "LDPE", "PET", "PP", "PS", "PVC")
-ZENODO_CLASSES: tuple[str, ...] = ("PE", "PP", "PS", "PMMA", "PAN")
+POLYMER_CLASSES: tuple[str, ...] = ("PE", "PP", "PS", "PMMA", "PAN")
 
 _model_cache: dict[str, tuple[SpectralTower, list[str], torch.device]] = {}
 
@@ -38,22 +33,11 @@ def _load_model(weights_path: Path) -> tuple[SpectralTower, list[str], torch.dev
         raise FileNotFoundError(f"weights not found at {weights_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
-    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-        state_dict = checkpoint["model_state_dict"]
-        classes = checkpoint.get("classes", list(POLYMER_CLASSES))
-    else:
-        state_dict = checkpoint
-        num_c = state_dict.get("classifier.weight", None)
-        if num_c is not None and num_c.shape[0] == 6:
-            classes = list(POLYMER_CLASSES)
-        elif num_c is not None and num_c.shape[0] == 5:
-            classes = list(ZENODO_CLASSES)
-        else:
-            classes = list(POLYMER_CLASSES)
+    classes = checkpoint.get("classes", list(POLYMER_CLASSES))
     model = SpectralTower(
-        num_classes=len(classes), input_bands=len(state_dict)
+        num_classes=len(classes), input_bands=checkpoint.get("input_bands", 600)
     )
-    model.load_state_dict(state_dict)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
     _model_cache[key] = (model, classes, device)
