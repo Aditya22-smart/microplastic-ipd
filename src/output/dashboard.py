@@ -131,6 +131,15 @@ with st.sidebar:
         "`MP_SPECTRAL_ENABLED=1` enables the spectral branch; "
         "it is **off by default**."
     )
+    with st.expander("Supported Operational Modes", expanded=False):
+        st.markdown(
+            "• **Mode 1: Visual Screening (Standalone)**\n"
+            "Fast optical scan (YOLO + morphology) for everyday labs without spectrometers.\n\n"
+            "• **Mode 2: Spectral Fingerprinting (Standalone)**\n"
+            "Direct 1D-CNN chemical classification (FTIR/Raman) when optical images are absent.\n\n"
+            "• **Mode 3: Dual Multi-Modal (Combined)**\n"
+            "Integrated multi-stage workflow pairing physical morphology with chemical polymer identification."
+        )
 
 # Publish the sidebar choice to the process env so the pipeline modules and the
 # report generator observe the same value.
@@ -139,14 +148,14 @@ spectral_active = spectral_on
 
 if spectral_active:
     st.success(
-        "**Mode: visual + spectral** — image analysis (Stage 1A/1B) and polymer "
-        "classification (Stage 2A/2B) are both active."
+        "**Mode: visual + spectral** — multi-modal analysis is active. "
+        "Image analysis (Stage 1A/1B) and spectral polymer classification (Stage 2A/2B) "
+        "can be run independently or combined."
     )
 else:
     st.info(
-        "**Mode: visual only** — the spectral branch is disabled, so only image "
-        "analysis (Stage 1A/1B) runs. Enable it in the sidebar to add polymer "
-        "classification."
+        "**Mode: visual only** — rapid optical screening (Stage 1A/1B) is active. "
+        "Enable the spectral branch in the sidebar to add chemical polymer classification."
     )
 
 # --- tabs -------------------------------------------------------------------
@@ -352,6 +361,13 @@ with tab_image:
                     )
                 except Exception as exc:  # noqa: BLE001
                     st.warning(f"Grad-CAM unavailable: {type(exc).__name__}: {exc}")
+
+            if spectral_active:
+                st.caption(
+                    "💡 **Stage 1 Complete:** Detected particles and classified morphology. "
+                    "If FTIR/Raman spectra are available, upload them in the **Spectrum** tab "
+                    "to pair physical dimensions with chemical polymer classification (Stage 2)."
+                )
         else:
             st.warning(
                 f"No particles above {conf_threshold:.2f}. Lower the confidence "
@@ -372,16 +388,28 @@ if spectral_active:
             import numpy as np
 
             results: list[dict] = []
+            raw_spectra_list: list[np.ndarray] = []
+            current_particle_id = 1
             for uploaded_spectrum in spectra:
                 try:
-                    spectrum = np.loadtxt(
-                        io.StringIO(uploaded_spectrum.getvalue().decode("utf-8")),
-                        delimiter=",",
-                    )
+                    content = uploaded_spectrum.getvalue().decode("utf-8")
+                    try:
+                        spectrum = np.loadtxt(io.StringIO(content), delimiter=",")
+                    except Exception:
+                        spectrum = np.loadtxt(io.StringIO(content))
                     if spectrum.ndim == 1:
                         spectrum = spectrum[None, :]
+                    elif spectrum.ndim == 2 and spectrum.shape[1] == 2:
+                        spectrum = spectrum[:, 1][None, :]
+                    elif spectrum.ndim == 2 and spectrum.shape[1] == 1:
+                        spectrum = spectrum.T
+
                     for row in spectrum:
-                        results.append(analyze_spectrum(row))
+                        record = analyze_spectrum(row)
+                        record["particle_id"] = current_particle_id
+                        results.append(record)
+                        raw_spectra_list.append(row)
+                        current_particle_id += 1
                 except FileNotFoundError as exc:
                     st.error(str(exc))
                     break
@@ -391,6 +419,18 @@ if spectral_active:
                     )
             if results:
                 st.session_state["spectrum_results"] = results
+                st.session_state["raw_spectra_list"] = raw_spectra_list
+
+                chip = st.columns(3)
+                chip[0].metric("Spectra analysed", len(results))
+                polymer_counts = Counter(r["polymer"] for r in results)
+                chip[1].metric("Dominant polymer", polymer_counts.most_common(1)[0][0])
+                mean_conf = (
+                    sum(float(r["polymer_confidence"]) for r in results) / len(results)
+                )
+                chip[2].metric("Mean confidence", f"{mean_conf:.3f}")
+
+                st.subheader("Classification results")
                 st.dataframe(
                     [
                         {
@@ -403,13 +443,104 @@ if spectral_active:
                     width="stretch",
                     hide_index=True,
                 )
+
+                st.subheader("Spectral profile")
+                spec_index = st.selectbox(
+                    "Spectrum",
+                    options=list(range(len(results))),
+                    format_func=lambda idx: (
+                        f"#{results[idx]['particle_id']} — "
+                        f"{results[idx]['polymer']} "
+                        f"({results[idx]['polymer_confidence']:.1%})"
+                    ),
+                    help="Inspect the 1D infrared absorption profile of any uploaded spectrum.",
+                )
+                selected_spectrum = raw_spectra_list[spec_index]
+
+                import plotly.graph_objects as go
+
+                fig_spec = go.Figure()
+                fig_spec.add_trace(
+                    go.Scatter(
+                        y=selected_spectrum,
+                        mode="lines",
+                        line={"color": "#286EE6", "width": 1.75},
+                        name="Spectrum",
+                        hovertemplate="Band %{x}: %{y:.4f}<extra></extra>",
+                    )
+                )
+                fig_spec.update_layout(
+                    xaxis_title="Spectral band index",
+                    yaxis_title="Intensity / absorbance",
+                    height=280,
+                    margin={"l": 40, "r": 20, "t": 20, "b": 40},
+                )
+                st.plotly_chart(
+                    _themed(fig_spec), width="stretch", config={"displayModeBar": False}
+                )
+
+                with st.expander("Spectral Saliency — why this polymer?"):
+                    st.caption(
+                        "Input-level gradient saliency highlights which infrared bands "
+                        "most strongly drove the 1D-CNN's classification decision."
+                    )
+                    try:
+                        from src.evaluation.spectral_saliency import (
+                            compute_spectral_saliency,
+                        )
+                        from src.models.predict_polymer import (
+                            DEFAULT_WEIGHTS,
+                            _load_model,
+                        )
+
+                        model, classes, device = _load_model(DEFAULT_WEIGHTS)
+                        saliency_norm, pred_idx, conf = compute_spectral_saliency(
+                            model, selected_spectrum, device=device
+                        )
+                        fig_sal = go.Figure()
+                        fig_sal.add_trace(
+                            go.Scatter(
+                                y=saliency_norm,
+                                mode="lines",
+                                fill="tozeroy",
+                                line={"color": "#0D9488", "width": 1.5},
+                                fillcolor="rgba(13, 148, 136, 0.25)",
+                                name="Saliency",
+                                hovertemplate="Band %{x}: %{y:.4f}<extra></extra>",
+                            )
+                        )
+                        fig_sal.update_layout(
+                            xaxis_title="Spectral band index",
+                            yaxis_title="Gradient saliency (normalized)",
+                            height=260,
+                            margin={"l": 40, "r": 20, "t": 20, "b": 40},
+                        )
+                        st.plotly_chart(
+                            _themed(fig_sal),
+                            width="stretch",
+                            config={"displayModeBar": False},
+                        )
+                        st.caption(
+                            f"Predicted **{results[spec_index]['polymer']}** at "
+                            f"{results[spec_index]['polymer_confidence']:.3f}. Peak regions "
+                            "represent spectral features critical to the model's confidence."
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        st.warning(
+                            f"Spectral saliency unavailable: {type(exc).__name__}: {exc}"
+                        )
+
+                st.caption(
+                    "💡 **Stage 2 Complete:** Chemical polymers identified via 1D-CNN. "
+                    "If an optical micrograph is available, upload it in the **Image** tab "
+                    "to pair with physical particle count, size, and morphology (Stage 1)."
+                )
         elif not st.session_state.get("spectrum_results"):
             with st.container(border=True):
                 st.markdown("#### No spectra loaded")
                 st.caption(
                     "Upload one or more preprocessed spectra to run Stage 2B polymer "
-                    "classification. The spectral model is not committed yet, so this "
-                    "branch will report a missing-checkpoint error until it is trained."
+                    "classification (1D-CNN trained on deduplicated C4 dataset)."
                 )
 
 
@@ -420,271 +551,370 @@ with tab_summary:
         st.session_state.get("spectrum_results", []) if spectral_active else []
     )
 
-    if records:
-        import plotly.express as px
-        import plotly.graph_objects as go
+    import plotly.express as px
+    import plotly.graph_objects as go
 
-        source_image = st.session_state.get("source_image")
-        image_size = source_image.size if source_image else (0, 0)
-        model_label = MODEL_LABELS.get(
-            st.session_state.get("model_name"),
-            st.session_state.get("model_name", "n/a"),
-        )
-        series = series_colours()
+    series = series_colours()
 
-        stats = field_stats(records, image_size, CONF_THRESHOLD)
-
-        st.subheader("What this field shows")
-        for line in interpret(stats):
-            st.markdown(f"- {line}")
-
-        st.caption(
-            f"Detector: {model_label} · confidence floor {CONF_THRESHOLD:.2f} · "
-            f"{image_size[0]}×{image_size[1]} px"
+    # Determine dynamic active operational mode
+    if records and spectral_active and spectrum_results:
+        headline_title = "Dual-Stage Multi-Modal Synthesis (Visual + Spectral Active)"
+        headline_desc = (
+            "Complete analytical pipeline: physical morphology from optical microscopy "
+            "paired with chemical polymer identification from infrared spectroscopy."
         )
-
-        tile = st.columns(5)
-        tile[0].metric(
-            "Particles", stats["count"], help="Boxes reported above the fixed floor."
+    elif records:
+        headline_title = "Standalone Visual Screening Synthesis (Stage 1 Active)"
+        headline_desc = (
+            "Physical characterization mode: optical particle counting, bounding boxes, "
+            "and morphology classification. Spectral pipeline is available if spectra are uploaded."
         )
-        tile[1].metric(
-            "Median detection conf",
-            f"{stats['median_detection']:.3f}",
-            help="Median, not mean: one confident outlier should not lift the headline.",
-            delta_color="off",
+    elif spectral_active and spectrum_results:
+        headline_title = "Standalone Chemical Fingerprinting Synthesis (Stage 2 Active)"
+        headline_desc = (
+            "Chemical identification mode: 1D-CNN polymer classification and saliency analysis. "
+            "Visual pipeline is available if an optical micrograph is uploaded."
         )
-        tile[2].metric(
-            "Below 0.70 conf",
-            f"{stats['marginal_share']:.0%}",
-            help="Detections the model was least sure about.",
-            delta_color="inverse",
-        )
-        tile[3].metric(
-            "Frame covered",
-            f"{stats['coverage']:.1%}",
-            help="Summed box area over frame area.",
-            delta_color="off",
-        )
-        tile[4].metric(
-            "Overlapping pairs",
-            f"{stats['touching']:.0%}",
-            help="Particles within touching distance of a neighbour.",
-            delta_color="inverse",
+    else:
+        headline_title = "Dual-Branch Pipeline Synthesis"
+        headline_desc = (
+            "Integrated analytical overview of physical morphology (Stage 1) "
+            "and chemical polymer identification (Stage 2)."
         )
 
-        _legend_strip(records)
+    # --- Header Status Banner ---
+    with st.container(border=True):
+        st.subheader(headline_title)
+        st.caption(headline_desc)
+        stat_l, stat_r = st.columns(2)
+        with stat_l:
+            if records:
+                st.success(
+                    f"**Visual Branch (Stage 1):** {len(records)} particle(s) detected & classified"
+                )
+            else:
+                st.info("**Visual Branch (Stage 1):** Standing by (Image upload optional)")
+        with stat_r:
+            if not spectral_active:
+                st.warning("**Spectral Branch (Stage 2):** Disabled (Enable in sidebar to activate)")
+            elif spectrum_results:
+                st.success(
+                    f"**Spectral Branch (Stage 2):** {len(spectrum_results)} spectrum/spectra classified"
+                )
+            else:
+                st.info("**Spectral Branch (Stage 2):** Standing by (Spectrum upload optional)")
 
-        # --- distributions --------------------------------------------------
-        left, right = st.columns(2)
+    # --- 50 / 50 Balanced Layout ---
+    col_visual, col_spectral = st.columns([1, 1], gap="medium")
 
-        with left:
-            st.markdown("**Morphology mix (Stage 1B)**")
-            st.plotly_chart(
-                _themed(
-                    px.bar(
-                        x=list(stats["morphology_counts"].values()),
-                        y=list(stats["morphology_counts"].keys()),
-                        orientation="h",
-                        labels={"x": "particles", "y": ""},
-                        color_discrete_sequence=series,
-                        text=list(stats["morphology_counts"].values()),
-                    ),
-                ),
-                width="stretch",
-                config={"displayModeBar": False},
-            )
+    # =========================================================================
+    # LEFT HALF (50%): VISUAL BRANCH (Stage 1A Detection + Stage 1B Morphology)
+    # =========================================================================
+    with col_visual:
+        with st.container(border=True):
+            st.markdown("### 🔬 Visual Morphology (Stage 1)")
+            if records:
+                source_image = st.session_state.get("source_image")
+                image_size = source_image.size if source_image else (0, 0)
+                model_label = MODEL_LABELS.get(
+                    st.session_state.get("model_name"),
+                    st.session_state.get("model_name", "n/a"),
+                )
+                stats = field_stats(records, image_size, CONF_THRESHOLD)
 
-        with right:
-            st.markdown("**Detection confidence spread**")
-            st.plotly_chart(
-                _themed(
-                    go.Figure(
-                        go.Bar(
-                            x=[label for _, _, label in CONFIDENCE_BINS],
-                            y=[
-                                stats["histogram"].get(label, 0)
-                                for _, _, label in CONFIDENCE_BINS
-                            ],
-                            marker_color=series[0],
-                            hovertemplate="%{x}<br>%{y} particle(s)<extra></extra>",
-                        )
-                    ).update_layout(barmode="stack"),
-                ),
-                width="stretch",
-                config={"displayModeBar": False},
-            )
-            st.caption(
-                "A tall first bar means the count rests on marginal detections, "
-                "and would drop if the floor were raised."
-            )
+                st.caption(
+                    f"Detector: {model_label} · confidence floor {CONF_THRESHOLD:.2f} · "
+                    f"{image_size[0]}×{image_size[1]} px"
+                )
 
-        left, right = st.columns(2)
+                vtile1, vtile2 = st.columns(2)
+                vtile1.metric(
+                    "Particles", stats["count"], help="Boxes reported above the fixed floor."
+                )
+                vtile2.metric(
+                    "Dominant morphology",
+                    Counter(r["morphology"] for r in records).most_common(1)[0][0],
+                    help="Most frequent morphology class in this field.",
+                )
 
-        with left:
-            st.markdown("**Particle size distribution**")
-            areas = sorted(float(r["bbox"][2]) * float(r["bbox"][3]) for r in records)
-            st.plotly_chart(
-                _themed(
-                    go.Figure(
-                        go.Histogram(
-                            x=areas,
-                            marker_color=series[1],
-                            nbinsx=max(4, min(14, len(areas))),
-                            hovertemplate="%{x:.0f} px²<br>%{y} particle(s)<extra></extra>",
-                        )
-                    ),
-                ),
-                width="stretch",
-                config={"displayModeBar": False},
-            )
-            st.caption(
-                f"Median {stats['area_median']:.0f} px² "
-                f"({stats['area_min']:.0f}-{stats['area_max']:.0f} px²). "
-                "Pixels only — the images carry no calibration metadata, so a "
-                "micron figure is not available."
-            )
+                vtile3, vtile4 = st.columns(2)
+                detection_confs = [float(r["detection_confidence"]) for r in records]
+                vtile3.metric(
+                    "Mean detection conf",
+                    f"{sum(detection_confs) / len(records):.3f}",
+                    help="Mean detection confidence across all particles.",
+                )
+                vtile4.metric(
+                    "Frame covered",
+                    f"{stats['coverage']:.1%}",
+                    help="Summed box area over frame area.",
+                )
 
-        with right:
-            st.markdown("**Where the particles sit**")
-            if image_size[0] > 0:
-                xs = [c[0] for c in stats["centroids"]]
-                ys = [c[1] for c in stats["centroids"]]
+                _legend_strip(records)
+
+                with st.expander("Field observations & qualitative notes", expanded=False):
+                    for line in interpret(stats):
+                        st.markdown(f"- {line}")
+
+                st.markdown("**Morphology mix (Stage 1B)**")
                 st.plotly_chart(
                     _themed(
-                        go.Figure(
-                            go.Scatter(
-                                x=xs,
-                                y=ys,
-                                mode="markers",
-                                marker={
-                                    "size": 11,
-                                    "color": [
-                                        float(r["detection_confidence"])
-                                        for r in records
-                                    ],
-                                    "colorscale": "Teal",
-                                    "line": {
-                                        "width": 1,
-                                        "color": palette()["border"],
-                                    },
-                                    "colorbar": {
-                                        "title": "conf",
-                                        "thickness": 10,
-                                        "outlinewidth": 0,
-                                    },
-                                },
-                                hovertemplate="(%{x:.0f}, %{y:.0f}) px<extra></extra>",
-                            )
-                        ).update_yaxes(
-                            scaleanchor="x", scaleratio=1, autorange="reversed"
-                        ),
+                        px.bar(
+                            x=list(stats["morphology_counts"].values()),
+                            y=list(stats["morphology_counts"].keys()),
+                            orientation="h",
+                            labels={"x": "particles", "y": ""},
+                            color_discrete_sequence=series,
+                            text=list(stats["morphology_counts"].values()),
+                        )
                     ),
                     width="stretch",
                     config={"displayModeBar": False},
                 )
+
+                st.markdown("**Detection confidence spread**")
+                st.plotly_chart(
+                    _themed(
+                        go.Figure(
+                            go.Bar(
+                                x=[label for _, _, label in CONFIDENCE_BINS],
+                                y=[
+                                    stats["histogram"].get(label, 0)
+                                    for _, _, label in CONFIDENCE_BINS
+                                ],
+                                marker_color=series[0],
+                                hovertemplate="%{x}<br>%{y} particle(s)<extra></extra>",
+                            )
+                        ).update_layout(barmode="stack")
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                )
+
+                st.markdown("**Detection class × morphology**")
+                cross = Counter((r["class"], r["morphology"]) for r in records)
+                classes = sorted({key[0] for key in cross})
+                morphologies = sorted({key[1] for key in cross})
+                st.plotly_chart(
+                    _themed(
+                        go.Figure(
+                            go.Heatmap(
+                                z=[
+                                    [cross.get((c, m), 0) for m in morphologies]
+                                    for c in classes
+                                ],
+                                x=morphologies,
+                                y=classes,
+                                colorscale="Teal",
+                                text=[
+                                    [str(cross.get((c, m), 0)) for m in morphologies]
+                                    for c in classes
+                                ],
+                                texttemplate="%{text}",
+                                hovertemplate="%{y} / %{x}: %{z}<extra></extra>",
+                            )
+                        )
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                )
+
+                if image_size[0] > 0:
+                    with st.expander("Spatial centroids & particle size"):
+                        xs = [c[0] for c in stats["centroids"]]
+                        ys = [c[1] for c in stats["centroids"]]
+                        st.plotly_chart(
+                            _themed(
+                                go.Figure(
+                                    go.Scatter(
+                                        x=xs,
+                                        y=ys,
+                                        mode="markers",
+                                        marker={
+                                            "size": 10,
+                                            "color": [
+                                                float(r["detection_confidence"])
+                                                for r in records
+                                            ],
+                                            "colorscale": "Teal",
+                                            "line": {
+                                                "width": 1,
+                                                "color": palette()["border"],
+                                            },
+                                            "colorbar": {
+                                                "title": "conf",
+                                                "thickness": 10,
+                                                "outlinewidth": 0,
+                                            },
+                                        },
+                                        hovertemplate="(%{x:.0f}, %{y:.0f}) px<extra></extra>",
+                                    )
+                                ).update_yaxes(
+                                    scaleanchor="x", scaleratio=1, autorange="reversed"
+                                )
+                            ),
+                            width="stretch",
+                            config={"displayModeBar": False},
+                        )
+
+                with st.expander("Per-particle table"):
+                    st.dataframe(
+                        [
+                            {
+                                "id": record["particle_id"],
+                                "class": record["class"],
+                                "detection_conf": record["detection_confidence"],
+                                "morphology": record["morphology"],
+                                "morphology_conf": round(
+                                    float(record["morphology_confidence"]), 4
+                                ),
+                                "area_px2": round(
+                                    float(record["bbox"][2]) * float(record["bbox"][3])
+                                ),
+                                "bbox (xywh)": record["bbox"],
+                            }
+                            for record in records
+                        ],
+                        width="stretch",
+                        hide_index=True,
+                    )
+            else:
+                st.info(
+                    "**Visual Branch Standing By (Independent Mode)**\n\n"
+                    "No microscope image uploaded in this session. The spectral branch runs completely "
+                    "independently.\n\n"
+                    "💡 If an optical micrograph is available, upload it in the **Image** tab to add "
+                    "YOLO particle detection, morphology mix, and size distributions."
+                )
+
+    # =========================================================================
+    # RIGHT HALF (50%): SPECTRAL BRANCH (Stage 2A / 2B)
+    # =========================================================================
+    with col_spectral:
+        with st.container(border=True):
+            st.markdown("### 📊 Spectral Polymer (Stage 2)")
+            if spectral_active and spectrum_results:
+                polymer_counts = Counter(r["polymer"] for r in spectrum_results)
+                confidences = [float(r["polymer_confidence"]) for r in spectrum_results]
+                mean_conf = sum(confidences) / len(confidences)
+                dom_polymer, dom_count = polymer_counts.most_common(1)[0]
+
                 st.caption(
-                    "Particle centres in frame coordinates, marker colour = "
-                    "detection confidence. Empty regions are areas the detector "
-                    "found nothing."
+                    "Classifier: 1D-CNN (C4 Deduplicated) · 6 classes: "
+                    "HDPE, LDPE, PET, PP, PS, PVC"
+                )
+
+                stile1, stile2 = st.columns(2)
+                stile1.metric(
+                    "Spectra analysed", len(spectrum_results), help="Total spectra processed."
+                )
+                stile2.metric(
+                    "Dominant polymer",
+                    f"{dom_polymer} ({dom_count / len(spectrum_results):.0%})",
+                    help="Most abundant polymer identified.",
+                )
+
+                stile3, stile4 = st.columns(2)
+                stile3.metric(
+                    "Mean spectral conf",
+                    f"{mean_conf:.3f}",
+                    help="Mean classification confidence score.",
+                )
+                stile4.metric(
+                    "Polymer diversity",
+                    f"{len(polymer_counts)} of 6",
+                    help="Distinct polymer classes identified.",
+                )
+
+                st.markdown("**Polymer distribution (Stage 2B)**")
+                st.plotly_chart(
+                    _themed(
+                        px.bar(
+                            x=list(polymer_counts.keys()),
+                            y=list(polymer_counts.values()),
+                            labels={"x": "Polymer", "y": "Spectra"},
+                            color=list(polymer_counts.keys()),
+                            color_discrete_sequence=series,
+                            text=list(polymer_counts.values()),
+                        )
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                )
+
+                st.markdown("**Classification confidence spread**")
+                st.plotly_chart(
+                    _themed(
+                        px.box(
+                            x=[r["polymer"] for r in spectrum_results],
+                            y=confidences,
+                            labels={"x": "Polymer", "y": "Confidence"},
+                            color_discrete_sequence=[
+                                series[1] if len(series) > 1 else series[0]
+                            ],
+                            points="all",
+                        )
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                )
+
+                with st.expander("Polymer composition breakdown"):
+                    breakdown_cols = st.columns(min(len(polymer_counts), 3))
+                    for i, (poly, cnt) in enumerate(polymer_counts.most_common()):
+                        with breakdown_cols[i % len(breakdown_cols)]:
+                            st.metric(poly, f"{cnt} ({cnt / len(spectrum_results):.1%})")
+
+                with st.expander("Per-spectrum table"):
+                    st.dataframe(
+                        [
+                            {
+                                "id": r["particle_id"],
+                                "polymer": r["polymer"],
+                                "confidence": round(float(r["polymer_confidence"]), 4),
+                            }
+                            for r in spectrum_results
+                        ],
+                        width="stretch",
+                        hide_index=True,
+                    )
+            elif not spectral_active:
+                st.warning(
+                    "**Spectral Branch Disabled**\n\n"
+                    "The spectral pipeline is currently switched off. Use the sidebar "
+                    "toggle **Enable spectral branch (Stage 2A/2B)** to activate polymer classification."
                 )
             else:
-                st.info("Image size unavailable, so positions cannot be plotted.")
+                st.info(
+                    "**Spectral Branch Standing By (Independent Mode)**\n\n"
+                    "No spectra uploaded in this session. The visual branch runs completely "
+                    "independently.\n\n"
+                    "💡 If FTIR/Raman spectra are available, upload CSV/TXT files in the **Spectrum** tab to add "
+                    "1D-CNN polymer classification (HDPE, LDPE, PET, PP, PS, PVC) and gradient saliency."
+                )
 
-        # --- cross-tab ------------------------------------------------------
-        st.markdown("**Detection class × morphology**")
-        cross = Counter((r["class"], r["morphology"]) for r in records)
-        classes = sorted({key[0] for key in cross})
-        morphologies = sorted({key[1] for key in cross})
-        st.plotly_chart(
-            _themed(
-                go.Figure(
-                    go.Heatmap(
-                        z=[
-                            [cross.get((c, m), 0) for m in morphologies]
-                            for c in classes
-                        ],
-                        x=morphologies,
-                        y=classes,
-                        colorscale="Teal",
-                        text=[
-                            [str(cross.get((c, m), 0)) for m in morphologies]
-                            for c in classes
-                        ],
-                        texttemplate="%{text}",
-                        hovertemplate="%{y} / %{x}: %{z}<extra></extra>",
-                    )
-                ),
-            ),
-            width="stretch",
-            config={"displayModeBar": False},
-        )
-
-        if spectral_active and spectrum_results:
-            polymer_counts = Counter(r["polymer"] for r in spectrum_results)
-            st.subheader("Polymer (Stage 2B)")
-            st.plotly_chart(
-                _themed(
-                    px.bar(
-                        x=list(polymer_counts.keys()),
-                        y=list(polymer_counts.values()),
-                        labels={"x": "", "y": "spectra"},
-                        color_discrete_sequence=series,
-                    ),
-                ),
-                width="stretch",
-                config={"displayModeBar": False},
-            )
-
-        with st.expander("Per-particle table"):
-            st.dataframe(
-                [
-                    {
-                        "id": record["particle_id"],
-                        "class": record["class"],
-                        "detection_confidence": record["detection_confidence"],
-                        "morphology": record["morphology"],
-                        "morphology_confidence": round(
-                            float(record["morphology_confidence"]), 4
-                        ),
-                        "area_px2": round(
-                            float(record["bbox"][2]) * float(record["bbox"][3])
-                        ),
-                        "bbox (xywh)": record["bbox"],
-                    }
-                    for record in records
-                ],
-                width="stretch",
-                hide_index=True,
-            )
-    else:
+    # --- Multi-Modal Synthesis (if both are present) ---
+    if records and spectral_active and spectrum_results:
         with st.container(border=True):
-            st.markdown("#### Nothing to summarise")
-            st.caption("Run an image analysis on the Image tab to populate this page.")
-        if spectral_active and spectrum_results:
-            # No image records, so `series` was never bound above -- fall back to
-            # the palette's own series colours for this branch.
-            import plotly.express as px
-
-            polymer_counts = Counter(r["polymer"] for r in spectrum_results)
-            st.subheader("Polymer (Stage 2B)")
-            st.plotly_chart(
-                _themed(
-                    px.bar(
-                        x=list(polymer_counts.keys()),
-                        y=list(polymer_counts.values()),
-                        labels={"x": "", "y": "spectra"},
-                        color_discrete_sequence=series_colours(),
-                    ),
-                ),
-                width="stretch",
+            st.markdown("#### 🔗 Joint Pipeline Synthesis")
+            dom_morph = Counter(r["morphology"] for r in records).most_common(1)[0][0]
+            dom_poly = Counter(r["polymer"] for r in spectrum_results).most_common(1)[0][0]
+            st.markdown(
+                f"- **Physical Findings:** Visual detector identified **{len(records)}** microplastic particles "
+                f"with dominant morphology **{dom_morph}**.\n"
+                f"- **Chemical Findings:** Spectral 1D-CNN classified **{len(spectrum_results)}** spectra with "
+                f"dominant polymer matrix **{dom_poly}**."
             )
 
+    # --- Reports Section ---
     with st.container(border=True):
         st.subheader("Reports")
-        if records:
+        if records or (spectral_active and spectrum_results):
             import json
 
-            payload: dict = {"particles": records}
+            payload: dict = {}
+            if records:
+                payload["particles"] = records
             if spectral_active and spectrum_results:
                 payload["spectra"] = spectrum_results
             left, right = st.columns(2)
@@ -699,10 +929,10 @@ with tab_summary:
             with right:
                 st.download_button(
                     "Download PDF",
-                    build_report_pdf(records),
+                    build_report_pdf(records if records else spectrum_results),
                     file_name="report.pdf",
                     mime="application/pdf",
                     width="stretch",
                 )
         else:
-            st.caption("Reports appear once an image has been analysed.")
+            st.caption("Reports appear once an image or spectrum has been analysed.")

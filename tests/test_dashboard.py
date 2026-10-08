@@ -384,8 +384,36 @@ def test_missing_detection_weights_shows_an_error_not_a_crash(
     assert at.error, "a missing checkpoint must surface as st.error"
 
 
-def test_spectral_upload_without_checkpoint_reports_cleanly() -> None:
+def test_spectral_upload_without_checkpoint_reports_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Enabling the spectral branch without its checkpoint must not crash."""
+    import io
+    from pathlib import Path
+
+    import numpy as np
+
+    import src.models.predict_polymer as predict_polymer
+
+    monkeypatch.setattr(
+        predict_polymer, "DEFAULT_WEIGHTS", Path("/nonexistent/spectral_weights.pth")
+    )
+    monkeypatch.setattr(predict_polymer, "_model_cache", {})
+
+    at = _run(env="1")
+    payload = io.BytesIO()
+    np.savetxt(payload, np.zeros((2, 600)), delimiter=",")
+    at = (
+        at.get("file_uploader")[1]
+        .upload("spectra.csv", payload.getvalue(), "text/csv")
+        .run()
+    )
+    assert not at.exception
+    assert at.error, "expected an error about the missing spectral checkpoint"
+
+
+def test_spectral_upload_with_checkpoint_produces_predictions() -> None:
+    """Uploading spectra when the checkpoint exists renders predictions and charts."""
     import io
 
     import numpy as np
@@ -399,7 +427,10 @@ def test_spectral_upload_without_checkpoint_reports_cleanly() -> None:
         .run()
     )
     assert not at.exception
-    assert at.error, "expected an error about the missing spectral checkpoint"
+    assert not at.error
+    assert len(at.session_state["spectrum_results"]) == 2
+    frames = at.get("dataframe")
+    assert frames, "no spectral results table rendered"
 
 
 @pytest.mark.parametrize(

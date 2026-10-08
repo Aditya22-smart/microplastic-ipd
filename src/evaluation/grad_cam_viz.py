@@ -128,14 +128,12 @@ def overlay_cam_on_image(
     return Image.fromarray(blended)
 
 
-<<<<<<< HEAD
 def compute_spectral_saliency(model, spectrum, target_class=None, device=None):
     """Vanilla gradient saliency for spectral 1D-CNN (Pipeline 2B - Day 8)."""
     from src.evaluation.spectral_saliency import compute_spectral_saliency as _css
 
     return _css(model, spectrum, target_class=target_class, device=device)
 
-=======
 def grad_cam_for_crop(crop, weights_path: Path | None = None) -> np.ndarray:
     """Run Grad-CAM on one cropped particle ROI.
 
@@ -164,4 +162,3 @@ def grad_cam_for_crop(crop, weights_path: Path | None = None) -> np.ndarray:
     finally:
         # Always unhook, or every widget interaction leaks another forward hook.
         cam.close()
->>>>>>> 26c0725dfeebd6c08379d6b88f915e3ae1714843
